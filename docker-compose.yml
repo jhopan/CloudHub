@@ -1,0 +1,103 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: storage-gateway-db
+    environment:
+      POSTGRES_DB: storage_gateway
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - storage-gateway-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: storage-gateway-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - storage-gateway-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../infra/docker/Dockerfile.backend
+    container_name: storage-gateway-backend
+    environment:
+      PORT: 8080
+      DATABASE_URL: postgres://postgres:***@postgres:5432/storage_gateway?sslmode=disable
+      REDIS_ADDR: redis:6379
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      RCLONE_PATH: /usr/bin/rclone
+      RCLONE_CONFIG_PATH: /etc/rclone/rclone.conf
+    volumes:
+      - rclone_config:/etc/rclone
+      - temp_uploads:/tmp/uploads
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - storage-gateway-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../infra/docker/Dockerfile.frontend
+    container_name: storage-gateway-frontend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    networks:
+      - storage-gateway-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: storage-gateway-nginx
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - frontend
+      - backend
+    restart: unless-stopped
+    networks:
+      - storage-gateway-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rclone_config:
+  temp_uploads:
+
+networks:
+  storage-gateway-network:
+    name: storage-gateway-network
