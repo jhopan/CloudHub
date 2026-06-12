@@ -44,7 +44,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	}
 
 	// Initialize rclone client
-	rcloneClient := rclone.NewClient("rclone", "")
+	rcloneClient := rclone.NewClient("rclone", "rclone.conf")
 
 	// Initialize scheduler (default: largest_free)
 	sched := scheduler.NewScheduler(scheduler.StrategyLargestFree)

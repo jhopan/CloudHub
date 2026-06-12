@@ -39,7 +39,9 @@ func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(timeoutCtx, c.rclonePath, args...)
-	cmd.Env = append(cmd.Env, fmt.Sprintf("RCLONE_CONFIG=%s", c.configPath))
+	if c.configPath != "" {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("RCLONE_CONFIG=%s", c.configPath))
+	}
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
