@@ -141,7 +141,7 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 	// Channel to receive the auth URL from either stdout or stderr
 	urlChan := make(chan string, 1)
 
-	// Read stderr in background (rclone prints auth URL to stderr!)
+	// Read stderr in background (rclone prints auth URL AND token to stderr!)
 	go func() {
 		scanner := bufio.NewScanner(stderr)
 		for scanner.Scan() {
@@ -159,19 +159,32 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 						case urlChan <- url:
 						default:
 						}
-						return
+						// Don't return - keep reading for token
 					}
+				}
+			}
+
+			// ALSO capture token from stderr (rclone may print token here!)
+			if strings.Contains(line, "access_token") || strings.Contains(line, "refresh_token") || strings.Contains(line, "\"token\"") {
+				jsonStart := strings.Index(line, "{")
+				if jsonStart >= 0 {
+					session.token = line[jsonStart:]
+					log.Printf("[rclone authorize] token captured from stderr!")
 				}
 			}
 		}
 	}()
 
 	// Single goroutine to read ALL stdout - handles URL + token capture
+	// Use a buffer to accumulate output for multi-line JSON token
+	var outputBuffer strings.Builder
 	authURL := ""
 	scanner := bufio.NewScanner(stdout)
+	scanner.Buffer(make([]byte, 1024*1024), 1024*1024) // 1MB buffer for large tokens
 	go func() {
 		for scanner.Scan() {
 			line := scanner.Text()
+			outputBuffer.WriteString(line + "\n")
 			log.Printf("[rclone authorize stdout] %s", line)
 
 			// Look for auth URL
@@ -188,13 +201,13 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 				}
 			}
 
-			// Look for token JSON in output
-			if strings.Contains(line, "access_token") && strings.Contains(line, "refresh_token") {
+			// Look for token JSON in output (more lenient matching)
+			if strings.Contains(line, "access_token") || strings.Contains(line, "refresh_token") || strings.Contains(line, "\"token\"") {
 				// Extract the JSON part
 				jsonStart := strings.Index(line, "{")
 				if jsonStart >= 0 {
 					session.token = line[jsonStart:]
-					log.Printf("[rclone authorize] token captured from stdout!")
+					log.Printf("[rclone authorize] token captured from stdout! len=%d", len(session.token))
 				}
 			}
 		}
@@ -204,8 +217,21 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 		session.err = waitErr
 		session.done = true
 
+		// Fallback: if no token captured from line-by-line, try to find it in full output
+		if session.token == "" {
+			fullOutput := outputBuffer.String()
+			if jsonStart := strings.Index(fullOutput, "{\"access_token\""); jsonStart >= 0 {
+				jsonEnd := strings.Index(fullOutput[jsonStart:], "}")
+				if jsonEnd >= 0 {
+					session.token = fullOutput[jsonStart : jsonStart+jsonEnd+1]
+					log.Printf("[rclone authorize] token captured from buffer fallback! len=%d", len(session.token))
+				}
+			}
+		}
+
 		if session.token == "" && waitErr == nil {
-			log.Printf("[rclone authorize] completed but no token captured from output")
+			log.Printf("[rclone authorize] completed but no token captured. Output length: %d", outputBuffer.Len())
+			log.Printf("[rclone authorize] full output:\n%s", outputBuffer.String())
 		}
 
 		log.Printf("[rclone authorize] finished, done=%v, token_len=%d, err=%v", session.done, len(session.token), session.err)
