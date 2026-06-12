@@ -8,6 +8,7 @@ import {
   Plus, HardDrive, CheckCircle, XCircle, Loader2, Trash2,
   ChevronRight, ChevronLeft, Zap, Clock, Check, X,
   FolderOpen, File, Upload, FolderPlus, RefreshCw, ArrowLeft,
+  LayoutGrid, List, Download, MoreVertical, Cloud, CloudUpload,
 } from 'lucide-react';
 import DashboardLayout from '@/components/DashboardLayout';
 import { ConnectionRow } from '@/components/ConnectionRow';
@@ -167,6 +168,7 @@ export default function ProviderDetailPage() {
   const [currentPath, setCurrentPath] = useState<string>('/');
   const [files, setFiles] = useState<FileItem[]>([]);
   const [loadingFiles, setLoadingFiles] = useState(false);
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
 
   // Account actions state
   const [testingAccounts, setTestingAccounts] = useState<Set<string>>(new Set());
@@ -174,9 +176,12 @@ export default function ProviderDetailPage() {
 
   // File actions state
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadFileName, setUploadFileName] = useState('');
   const [showMkdirDialog, setShowMkdirDialog] = useState(false);
   const [mkdirName, setMkdirName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ─── Fetch Data ──────────────────────────────────────────────────────────
@@ -338,21 +343,74 @@ export default function ProviderDetailPage() {
     if (!files || !selectedAccountId) return;
 
     setUploading(true);
+    setUploadProgress(0);
+    
     try {
       for (let i = 0; i < files.length; i++) {
+        setUploadFileName(files[i].name);
+        setUploadProgress(Math.round((i / files.length) * 100));
+        
         const formData = new FormData();
         formData.append('file', files[i]);
         await apiClient.post(`/storage-accounts/${selectedAccountId}/files/upload?path=${encodeURIComponent(currentPath)}`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
       }
+      setUploadProgress(100);
       fetchFiles();
       fetchData(); // refresh capacity
     } catch (err: any) {
       alert('Upload failed: ' + err.message);
     } finally {
       setUploading(false);
+      setUploadProgress(0);
+      setUploadFileName('');
       if (e.target) e.target.value = '';
+    }
+  };
+
+  // ─── Drag and Drop Upload ───────────────────────────────────────────────
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    
+    const droppedFiles = e.dataTransfer.files;
+    if (!droppedFiles || droppedFiles.length === 0 || !selectedAccountId) return;
+
+    setUploading(true);
+    setUploadProgress(0);
+
+    try {
+      for (let i = 0; i < droppedFiles.length; i++) {
+        setUploadFileName(droppedFiles[i].name);
+        setUploadProgress(Math.round((i / droppedFiles.length) * 100));
+        
+        const formData = new FormData();
+        formData.append('file', droppedFiles[i]);
+        await apiClient.post(`/storage-accounts/${selectedAccountId}/files/upload?path=${encodeURIComponent(currentPath)}`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+      }
+      setUploadProgress(100);
+      fetchFiles();
+      fetchData();
+    } catch (err: any) {
+      alert('Upload failed: ' + err.message);
+    } finally {
+      setUploading(false);
+      setUploadProgress(0);
+      setUploadFileName('');
     }
   };
 
@@ -432,16 +490,19 @@ export default function ProviderDetailPage() {
     : 0;
 
   const getTotalStorageColor = () => {
-    if (totalUsagePercent >= 90) return 'bg-red-500';
-    if (totalUsagePercent >= 70) return 'bg-amber-500';
-    return 'bg-blue-500';
+    if (totalUsagePercent >= 90) return 'bg-gradient-to-r from-red-500 to-red-600';
+    if (totalUsagePercent >= 70) return 'bg-gradient-to-r from-amber-500 to-amber-600';
+    return 'bg-gradient-to-r from-blue-500 to-blue-600';
   };
 
   if (loading) {
     return (
       <DashboardLayout>
         <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <div className="text-center">
+            <Loader2 className="h-10 w-10 animate-spin text-blue-600 mx-auto mb-4" />
+            <p className="text-sm text-gray-500">Loading provider details...</p>
+          </div>
         </div>
       </DashboardLayout>
     );
@@ -452,13 +513,17 @@ export default function ProviderDetailPage() {
       <DashboardLayout>
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="text-center py-16">
-            <XCircle className="w-12 h-12 text-red-400 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">{error || 'Provider not found'}</h3>
+            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+              <XCircle className="w-8 h-8 text-red-500" />
+            </div>
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">{error || 'Provider not found'}</h3>
+            <p className="text-sm text-gray-500 mb-6">The provider you're looking for doesn't exist or has been removed.</p>
             <button
               onClick={() => router.push('/providers')}
-              className="mt-4 px-4 py-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+              className="inline-flex items-center gap-2 px-5 py-2.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors"
             >
-              ← Back to Providers
+              <ArrowLeft className="w-4 h-4" />
+              Back to Providers
             </button>
           </div>
         </div>
@@ -471,97 +536,143 @@ export default function ProviderDetailPage() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-sm">
+        <nav className="flex items-center gap-2 text-sm">
           <button
             onClick={() => router.push('/providers')}
-            className="text-gray-500 hover:text-gray-700 flex items-center gap-1 transition-colors"
+            className="flex items-center gap-1.5 text-gray-500 hover:text-gray-900 transition-colors group"
           >
-            <ArrowLeft className="w-4 h-4" />
-            Providers
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+            <span>Providers</span>
           </button>
-          <ChevronRight className="w-3 h-3 text-gray-400" />
-          <span className="text-gray-900 font-medium">{provider.display_name}</span>
-        </div>
+          <ChevronRight className="w-4 h-4 text-gray-300" />
+          <div className="flex items-center gap-2">
+            <ProviderIcon 
+              src={provider.icon_url} 
+              alt={provider.display_name}
+              size={16}
+              fallbackText={providerType.slice(0, 2).toUpperCase()}
+              fallbackColor={meta?.accent || '#6B7280'}
+            />
+            <span className="font-medium text-gray-900">{provider.display_name}</span>
+          </div>
+        </nav>
 
         {/* Header Section */}
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-          <div className="flex items-start justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-16 h-16 rounded-xl bg-gradient-to-br from-gray-50 to-gray-100 flex items-center justify-center border border-gray-200">
-                <ProviderIcon 
-                  src={provider.icon_url} 
-                  alt={provider.display_name}
-                  size={64}
-                  fallbackText={providerType.slice(0, 2).toUpperCase()}
-                  fallbackColor={meta?.accent || '#6B7280'}
-                />
+        <div className="relative overflow-hidden bg-gradient-to-br from-white via-gray-50/50 to-gray-100/50 rounded-2xl border border-gray-200 shadow-sm">
+          {/* Background decoration */}
+          <div className="absolute top-0 right-0 w-64 h-64 bg-gradient-to-br opacity-[0.03] -translate-y-1/2 translate-x-1/2 rounded-full" 
+               style={{ background: `radial-gradient(circle, ${meta?.accent || '#6B7280'}, transparent)` }} />
+          
+          <div className="relative p-6 sm:p-8">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-6">
+              <div className="flex items-center gap-5">
+                <div className="w-20 h-20 rounded-2xl bg-white shadow-lg shadow-gray-200/50 flex items-center justify-center border border-gray-100 ring-4 ring-gray-50">
+                  <ProviderIcon 
+                    src={provider.icon_url} 
+                    alt={provider.display_name}
+                    size={72}
+                    fallbackText={providerType.slice(0, 2).toUpperCase()}
+                    fallbackColor={meta?.accent || '#6B7280'}
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center gap-3 mb-1">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 tracking-tight">{provider.display_name}</h1>
+                    {provider.is_active && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                        <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-sm text-gray-500">
+                    {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'} connected
+                  </p>
+                </div>
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">{provider.display_name}</h1>
-                <p className="text-sm text-gray-500 mt-1">{meta?.description || provider.display_name}</p>
-              </div>
-            </div>
 
-            <button
-              onClick={() => setShowAddModal(true)}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              <Plus className="w-4 h-4" />
-              Add Account
-            </button>
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-gray-900 text-white text-sm font-medium rounded-xl hover:bg-gray-800 active:scale-[0.98] transition-all shadow-lg shadow-gray-900/10"
+              >
+                <Plus className="w-4 h-4" />
+                Add Account
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Total Storage Card */}
         {accounts.length > 0 && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Total Storage</h2>
-              <span className="text-sm text-gray-500">
-                {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
-              </span>
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                  <HardDrive className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">Total Storage</h2>
+                  <p className="text-xs text-gray-500">Across all {provider.display_name} accounts</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-bold text-gray-900">{totalUsagePercent}%</div>
+                <div className="text-xs text-gray-500">used</div>
+              </div>
             </div>
             
-            <div className="mb-2">
-              <div className="flex items-center justify-between text-sm mb-2">
-                <span className="text-gray-600">
-                  {formatBytes(totalStorage.used)} / {formatBytes(totalStorage.capacity)}
-                </span>
-                <span className="font-semibold text-gray-900">{totalUsagePercent}%</span>
-              </div>
+            <div className="space-y-3">
               <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
                 <div
-                  className={`h-full ${getTotalStorageColor()} transition-all duration-500`}
+                  className={`h-full ${getTotalStorageColor()} transition-all duration-700 ease-out rounded-full`}
                   style={{ width: `${Math.min(totalUsagePercent, 100)}%` }}
                 />
               </div>
+              
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-600">
+                  <span className="font-medium text-gray-900">{formatBytes(totalStorage.used)}</span>
+                  <span className="text-gray-400 mx-1.5">of</span>
+                  <span className="font-medium text-gray-900">{formatBytes(totalStorage.capacity)}</span>
+                </span>
+                {totalStorage.available > 0 && (
+                  <span className="text-gray-500">
+                    <span className="font-medium text-green-600">{formatBytes(totalStorage.available)}</span>
+                    <span className="ml-1">free</span>
+                  </span>
+                )}
+              </div>
             </div>
-            
-            {totalStorage.available > 0 && (
-              <p className="text-xs text-gray-500 mt-2">
-                {formatBytes(totalStorage.available)} available
-              </p>
-            )}
           </div>
         )}
 
         {/* Connections Section */}
         {accounts.length > 0 ? (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Connections</h2>
-              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer hover:text-gray-900">
-                <input
-                  type="checkbox"
-                  checked={selectedAccountIds.length === accounts.length && accounts.length > 0}
-                  onChange={(e) => handleSelectAll(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                />
-                Select All
-              </label>
+          <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center">
+                    <Cloud className="w-5 h-5 text-purple-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">Connections</h2>
+                    <p className="text-xs text-gray-500">{accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}</p>
+                  </div>
+                </div>
+                <label className="flex items-center gap-2.5 px-3 py-2 rounded-lg hover:bg-gray-50 cursor-pointer transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={selectedAccountIds.length === accounts.length && accounts.length > 0}
+                    onChange={(e) => handleSelectAll(e.target.checked)}
+                    className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">Select All</span>
+                </label>
+              </div>
             </div>
 
-            <div className="space-y-3">
+            <div className="p-4 space-y-3">
               {accounts.map(account => (
                 <ConnectionRow
                   key={account.id}
@@ -592,151 +703,325 @@ export default function ProviderDetailPage() {
 
         {/* File Browser Section */}
         {accounts.length > 0 && selectedAccountId && (
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
-            <div className="flex items-center justify-between mb-4">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">File Browser</h2>
-                <p className="text-sm text-gray-500 mt-1">
-                  {accounts.find(a => a.id === selectedAccountId)?.label || 'Select an account'}
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <select
-                  value={selectedAccountId || ''}
-                  onChange={(e) => setSelectedAccountId(e.target.value)}
-                  className="px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  {accounts.map(account => (
-                    <option key={account.id} value={account.id}>
-                      {account.label}
-                    </option>
-                  ))}
-                </select>
+          <div 
+            className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+                    <FolderOpen className="w-5 h-5 text-amber-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-gray-900">File Browser</h2>
+                    <p className="text-xs text-gray-500">
+                      {accounts.find(a => a.id === selectedAccountId)?.label || 'Select an account'}
+                    </p>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  {/* Account Selector */}
+                  <select
+                    value={selectedAccountId || ''}
+                    onChange={(e) => setSelectedAccountId(e.target.value)}
+                    className="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  >
+                    {accounts.map(account => (
+                      <option key={account.id} value={account.id}>
+                        {account.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center justify-end gap-2 mb-4">
-              <button
-                onClick={fetchFiles}
-                disabled={loadingFiles}
-                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-                title="Refresh"
-              >
-                <RefreshCw className={`w-4 h-4 ${loadingFiles ? 'animate-spin' : ''}`} />
-              </button>
-              <button 
-                className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
-                onClick={() => setShowMkdirDialog(true)}
-              >
-                <FolderPlus className="w-4 h-4" />
-                New Folder
-              </button>
-              <label className="flex items-center gap-2 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 cursor-pointer transition-colors">
-                <Upload className="w-4 h-4" />
-                {uploading ? 'Uploading...' : 'Upload'}
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={handleUpload}
-                  disabled={uploading}
-                />
-              </label>
-            </div>
+            {/* Toolbar */}
+            <div className="px-6 py-3 bg-gray-50/50 border-b border-gray-100">
+              <div className="flex items-center justify-between">
+                {/* Breadcrumb */}
+                <div className="flex items-center gap-1 text-sm overflow-x-auto scrollbar-hide">
+                  <button
+                    onClick={() => setCurrentPath('/')}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      currentPath === '/' 
+                        ? 'font-medium text-gray-900 bg-white shadow-sm' 
+                        : 'text-gray-500 hover:text-gray-900 hover:bg-white/50'
+                    }`}
+                  >
+                    <FolderOpen className="w-3.5 h-3.5 inline mr-1" />
+                    Home
+                  </button>
+                  {currentPath !== '/' && currentPath.split('/').filter(Boolean).map((part, i, arr) => {
+                    const path = '/' + arr.slice(0, i + 1).join('/');
+                    const isLast = i === arr.length - 1;
+                    return (
+                      <span key={path} className="flex items-center gap-1">
+                        <ChevronRight className="w-3.5 h-3.5 text-gray-300 shrink-0" />
+                        <button
+                          onClick={() => setCurrentPath(path)}
+                          className={`px-2.5 py-1 rounded-md transition-all truncate max-w-[120px] ${
+                            isLast
+                              ? 'font-medium text-gray-900 bg-white shadow-sm' 
+                              : 'text-gray-500 hover:text-gray-900 hover:bg-white/50'
+                          }`}
+                        >
+                          {part}
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
 
-            {/* Breadcrumb */}
-            <div className="flex items-center gap-1 text-sm text-gray-600 mb-4 overflow-x-auto">
-              <button
-                onClick={() => setCurrentPath('/')}
-                className={`px-2 py-1 rounded hover:bg-gray-100 ${currentPath === '/' ? 'font-medium text-gray-900' : ''}`}
-              >
-                /
-              </button>
-              {currentPath !== '/' && currentPath.split('/').filter(Boolean).map((part, i, arr) => {
-                const path = '/' + arr.slice(0, i + 1).join('/');
-                return (
-                  <span key={path} className="flex items-center gap-1">
-                    <ChevronRight className="w-3 h-3 text-gray-400" />
+                {/* Actions */}
+                <div className="flex items-center gap-1.5">
+                  {/* View Toggle */}
+                  <div className="flex items-center bg-gray-100 rounded-lg p-0.5 mr-2">
                     <button
-                      onClick={() => setCurrentPath(path)}
-                      className={`px-2 py-1 rounded hover:bg-gray-100 ${i === arr.length - 1 ? 'font-medium text-gray-900' : ''}`}
+                      onClick={() => setViewMode('grid')}
+                      className={`p-1.5 rounded-md transition-all ${
+                        viewMode === 'grid' 
+                          ? 'bg-white shadow-sm text-gray-900' 
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                      title="Grid view"
                     >
-                      {part}
+                      <LayoutGrid className="w-4 h-4" />
                     </button>
-                  </span>
-                );
-              })}
+                    <button
+                      onClick={() => setViewMode('list')}
+                      className={`p-1.5 rounded-md transition-all ${
+                        viewMode === 'list' 
+                          ? 'bg-white shadow-sm text-gray-900' 
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                      title="List view"
+                    >
+                      <List className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  <button
+                    onClick={fetchFiles}
+                    disabled={loadingFiles}
+                    className="p-2 text-gray-500 hover:text-gray-900 hover:bg-white rounded-lg transition-all"
+                    title="Refresh"
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingFiles ? 'animate-spin' : ''}`} />
+                  </button>
+                  <button 
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-white hover:shadow-sm rounded-lg transition-all"
+                    onClick={() => setShowMkdirDialog(true)}
+                  >
+                    <FolderPlus className="w-4 h-4" />
+                    <span className="hidden sm:inline">New Folder</span>
+                  </button>
+                  <label className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 active:scale-[0.98] cursor-pointer transition-all shadow-sm">
+                    <Upload className="w-4 h-4" />
+                    <span className="hidden sm:inline">{uploading ? 'Uploading...' : 'Upload'}</span>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={handleUpload}
+                      disabled={uploading}
+                    />
+                  </label>
+                </div>
+              </div>
             </div>
 
-            {/* File List */}
-            {loadingFiles ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+            {/* Upload Progress */}
+            {uploading && (
+              <div className="px-6 py-3 bg-blue-50 border-b border-blue-100">
+                <div className="flex items-center gap-3">
+                  <CloudUpload className="w-5 h-5 text-blue-600 animate-bounce" />
+                  <div className="flex-1">
+                    <div className="flex items-center justify-between text-sm mb-1.5">
+                      <span className="font-medium text-blue-900 truncate">{uploadFileName}</span>
+                      <span className="text-blue-600 font-semibold">{uploadProgress}%</span>
+                    </div>
+                    <div className="h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-600 transition-all duration-300 rounded-full"
+                        style={{ width: `${uploadProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
-            ) : files.length === 0 ? (
-              <div className="text-center py-12">
-                <FolderOpen className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                <p className="text-sm text-gray-500">This folder is empty</p>
-                <p className="text-xs text-gray-400 mt-1">Upload files or create folders to get started</p>
-              </div>
-            ) : (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="text-left px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                      <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Size</th>
-                      <th className="text-right px-4 py-3 text-xs font-medium text-gray-500 uppercase tracking-wider">Modified</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    {files.map(file => (
-                      <tr
-                        key={file.path}
-                        className="hover:bg-gray-50 cursor-pointer group"
-                        onClick={() => {
-                          if (file.type === 'folder') {
-                            setCurrentPath(file.path);
-                          } else {
-                            handleDownload(file.path, file.name);
-                          }
-                        }}
-                      >
-                        <td className="px-4 py-3 text-sm">
-                          <div className="flex items-center gap-2">
-                            {file.type === 'folder' ? (
-                              <FolderOpen className="w-4 h-4 text-blue-500" />
-                            ) : (
-                              <File className="w-4 h-4 text-gray-400" />
-                            )}
-                            <span className={file.type === 'folder' ? 'font-medium text-gray-900' : 'text-gray-700'}>
-                              {file.name}
-                            </span>
+            )}
+
+            {/* File Content */}
+            <div className="p-6">
+              {loadingFiles ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <Loader2 className="w-8 h-8 animate-spin text-blue-600 mb-3" />
+                  <p className="text-sm text-gray-500">Loading files...</p>
+                </div>
+              ) : files.length === 0 ? (
+                <div 
+                  className={`relative border-2 border-dashed rounded-xl p-12 text-center transition-all ${
+                    dragOver 
+                      ? 'border-blue-400 bg-blue-50' 
+                      : 'border-gray-200 bg-gray-50/50 hover:border-gray-300'
+                  }`}
+                >
+                  <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-4">
+                    <CloudUpload className={`w-8 h-8 ${dragOver ? 'text-blue-500' : 'text-gray-400'}`} />
+                  </div>
+                  <h3 className="text-base font-semibold text-gray-900 mb-1">
+                    {dragOver ? 'Drop files here' : 'This folder is empty'}
+                  </h3>
+                  <p className="text-sm text-gray-500 mb-4">
+                    {dragOver ? 'Release to upload' : 'Drag and drop files here, or click to upload'}
+                  </p>
+                  <div className="flex items-center justify-center gap-3">
+                    <label className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 cursor-pointer transition-colors">
+                      <Upload className="w-4 h-4" />
+                      Upload Files
+                      <input
+                        type="file"
+                        multiple
+                        className="hidden"
+                        onChange={handleUpload}
+                        disabled={uploading}
+                      />
+                    </label>
+                    <button
+                      onClick={() => setShowMkdirDialog(true)}
+                      className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-200 hover:bg-gray-50 transition-colors"
+                    >
+                      <FolderPlus className="w-4 h-4" />
+                      New Folder
+                    </button>
+                  </div>
+                </div>
+              ) : viewMode === 'grid' ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                  {files.map((file, index) => (
+                    <div
+                      key={`${file.path}-${index}`}
+                      onClick={() => {
+                        if (file.type === 'folder') {
+                          setCurrentPath(file.path);
+                        } else {
+                          handleDownload(file.path, file.name);
+                        }
+                      }}
+                      className="group relative p-4 rounded-xl border border-gray-200 hover:border-gray-300 hover:shadow-md cursor-pointer transition-all bg-white hover:-translate-y-0.5"
+                    >
+                      {/* Delete button */}
+                      {file.type !== 'folder' && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.path, file.name); }}
+                          className="absolute top-2 right-2 p-1.5 rounded-lg bg-white shadow-sm border border-gray-100 opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 hover:border-red-200 transition-all"
+                          title="Delete"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      
+                      {/* Icon */}
+                      <div className="flex justify-center mb-3">
+                        {file.type === 'folder' ? (
+                          <div className="w-12 h-12 rounded-xl bg-blue-50 flex items-center justify-center">
+                            <FolderOpen className="w-6 h-6 text-blue-500" />
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500 text-right">
-                          {file.type === 'folder' ? '—' : formatBytes(file.size)}
-                        </td>
-                        <td className="px-4 py-3 text-sm text-gray-500 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <span>{formatDate(file.modified)}</span>
+                        ) : (
+                          <div className="w-12 h-12 rounded-xl bg-gray-50 flex items-center justify-center">
+                            <File className="w-6 h-6 text-gray-400" />
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Name */}
+                      <p className={`text-sm text-center truncate ${
+                        file.type === 'folder' ? 'font-medium text-gray-900' : 'text-gray-700'
+                      }`}>
+                        {file.name}
+                      </p>
+                      
+                      {/* Meta */}
+                      <p className="text-xs text-gray-400 text-center mt-1">
+                        {file.type === 'folder' ? 'Folder' : formatBytes(file.size)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                /* List View */
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-gray-50/80">
+                      <tr>
+                        <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Name</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider w-24">Size</th>
+                        <th className="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider w-32">Modified</th>
+                        <th className="w-12"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {files.map((file, index) => (
+                        <tr
+                          key={`${file.path}-${index}`}
+                          className="hover:bg-gray-50 cursor-pointer group transition-colors"
+                          onClick={() => {
+                            if (file.type === 'folder') {
+                              setCurrentPath(file.path);
+                            } else {
+                              handleDownload(file.path, file.name);
+                            }
+                          }}
+                        >
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-3">
+                              {file.type === 'folder' ? (
+                                <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                                  <FolderOpen className="w-4 h-4 text-blue-500" />
+                                </div>
+                              ) : (
+                                <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
+                                  <File className="w-4 h-4 text-gray-400" />
+                                </div>
+                              )}
+                              <span className={`text-sm truncate ${
+                                file.type === 'folder' ? 'font-medium text-gray-900' : 'text-gray-700'
+                              }`}>
+                                {file.name}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-500 text-right">
+                            {file.type === 'folder' ? '—' : formatBytes(file.size)}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-500 text-right">
+                            {formatDate(file.modified)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
                             {file.type !== 'folder' && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.path, file.name); }}
-                                className="opacity-0 group-hover:opacity-100 p-1 text-red-400 hover:text-red-600 rounded transition-opacity"
+                                className="p-1.5 rounded-lg opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-600 hover:bg-red-50 transition-all"
                                 title="Delete"
                               >
-                                <Trash2 className="w-3.5 h-3.5" />
+                                <Trash2 className="w-4 h-4" />
                               </button>
                             )}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -758,17 +1043,22 @@ export default function ProviderDetailPage() {
 
       {/* Create Folder Dialog */}
       {showMkdirDialog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">New Folder</h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 border border-gray-100">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+                <FolderPlus className="w-5 h-5 text-blue-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">New Folder</h3>
+            </div>
             <input
               type="text"
               value={mkdirName}
               onChange={(e) => setMkdirName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()}
-              placeholder="Folder name"
+              placeholder="Enter folder name"
               autoFocus
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4"
+              className="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"
             />
             <div className="flex justify-end gap-2">
               <button
@@ -791,18 +1081,21 @@ export default function ProviderDetailPage() {
 
       {/* Bulk Operations Bar */}
       {selectedAccountIds.length > 0 && (
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-40">
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-200 shadow-lg z-40">
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center">
+                  <Check className="w-4 h-4 text-blue-600" />
+                </div>
                 <span className="text-sm font-medium text-gray-900">
                   {selectedAccountIds.length} {selectedAccountIds.length === 1 ? 'account' : 'accounts'} selected
                 </span>
                 <button
                   onClick={() => setSelectedAccountIds([])}
-                  className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+                  className="text-sm text-gray-500 hover:text-gray-700 transition-colors underline"
                 >
-                  Clear selection
+                  Clear
                 </button>
               </div>
               <div className="flex items-center gap-2">
