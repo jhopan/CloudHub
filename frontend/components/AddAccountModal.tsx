@@ -96,7 +96,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
     setError(null);
     
     try {
-      const res = await apiClient.get('/oauth/initiate', {
+      const res = await apiClient.get('/oauth/google/initiate', {
         params: {
           provider: provider.type,
           label: label || `${provider.display_name} Account`,
