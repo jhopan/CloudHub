@@ -127,7 +127,8 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
           params: { session_id: sessionId },
         });
         
-        if (res.data.status === 'completed') {
+        // Backend returns: { done: bool, success: bool, error?: string }
+        if (res.data.done && res.data.success) {
           setStep('success');
           setTimeout(() => {
             onSuccess();
@@ -136,31 +137,34 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
           return;
         }
         
-        if (res.data.status === 'failed') {
+        if (res.data.done && !res.data.success) {
           setError(res.data.error || 'OAuth failed');
           setStep('error');
           return;
         }
         
-        // Continue polling
+        // Still pending - continue polling
         attempts++;
         if (attempts < maxAttempts) {
-          setTimeout(poll, 5000);
+          setTimeout(poll, 3000);
         } else {
           setError('OAuth timeout - please try again');
           setStep('error');
         }
       } catch (err: any) {
         if (err.response?.status === 404) {
-          // Session completed or expired
-          setStep('success');
-          setTimeout(() => {
-            onSuccess();
-            onClose();
-          }, 1500);
-        } else {
-          setError('Failed to check OAuth status');
+          // Session not found or expired - this is an error, NOT success
+          setError('OAuth session expired. Please try again.');
           setStep('error');
+        } else {
+          // Retry on other errors
+          attempts++;
+          if (attempts < maxAttempts) {
+            setTimeout(poll, 3000);
+          } else {
+            setError('Failed to check OAuth status');
+            setStep('error');
+          }
         }
       }
     };
