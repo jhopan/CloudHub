@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"storage-gateway/internal/api/handlers"
@@ -43,8 +44,9 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 		panic("failed to initialize encryptor: " + err.Error())
 	}
 
-	// Initialize rclone client
-	rcloneClient := rclone.NewClient("rclone", "rclone.conf")
+	// Initialize rclone client with absolute path
+	absConfigPath, _ := filepath.Abs("rclone.conf")
+	rcloneClient := rclone.NewClient("rclone", absConfigPath)
 
 	// Initialize scheduler (default: largest_free)
 	sched := scheduler.NewScheduler(scheduler.StrategyLargestFree)
