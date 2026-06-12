@@ -32,7 +32,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const navItems = [
     { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/providers', label: 'Providers', icon: Cloud },
-    { href: '/files', label: 'Files', icon: Files },
+    { href: '/files', label: 'My Files', icon: Files },
     { href: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
     { href: '/usage', label: 'Usage', icon: BarChart3 },
   ];
