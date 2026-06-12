@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -311,30 +312,38 @@ func (s *RcloneOAuthService) finalizeAuth(ctx context.Context, session *authSess
 	// Generate rclone remote name
 	remoteName := fmt.Sprintf("%s_%s_%d", session.providerType, session.userID.String()[:8], time.Now().Unix())
 
-	// Create rclone remote
-	if session.token != "" {
-		// We captured the token from rclone authorize output
-		rcloneParams := map[string]string{
-			"token": session.token,
-		}
-		if session.backend == "drive" {
-			rcloneParams["scope"] = "drive"
-		}
-
-		if err := s.rcloneClient.ConfigCreate(ctx, remoteName, session.backend, rcloneParams); err != nil {
-			return "", fmt.Errorf("failed to create rclone remote: %w", err)
-		}
-	} else {
-		// Token not captured from output - rclone authorize may have saved it internally
-		// Try to create remote using rclone config create with interactive=false
-		// Actually, rclone authorize doesn't save to config - it just prints the token
-		return "", fmt.Errorf("failed to capture OAuth token from rclone authorize output. Please try again.")
+	if session.token == "" {
+		return "", fmt.Errorf("no OAuth token captured from rclone authorize output")
 	}
+
+	// Write config directly to file instead of using `rclone config create`
+	// (which starts an interactive wizard and blocks)
+	configPath := s.rcloneClient.GetConfigPath()
+	if configPath == "" {
+		// Default to rclone.conf in current directory
+		configPath = "rclone.conf"
+	}
+
+	// Build INI-style config block
+	configBlock := fmt.Sprintf("[%s]\ntype = %s\nscope = drive\ntoken = %s\n",
+		remoteName, session.backend, session.token)
+
+	// Append to config file
+	f, err := os.OpenFile(configPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return "", fmt.Errorf("failed to open rclone config file: %w", err)
+	}
+	defer f.Close()
+
+	if _, err := f.WriteString(configBlock + "\n"); err != nil {
+		return "", fmt.Errorf("failed to write rclone config: %w", err)
+	}
+
+	log.Printf("[rclone] wrote config for remote %s to %s", remoteName, configPath)
 
 	// Get provider from DB
 	provider, err := s.providerRepo.GetByType(ctx, session.providerType)
 	if err != nil {
-		s.rcloneClient.ConfigDelete(ctx, remoteName)
 		return "", fmt.Errorf("provider not found: %w", err)
 	}
 
@@ -355,10 +364,10 @@ func (s *RcloneOAuthService) finalizeAuth(ctx context.Context, session *authSess
 	}
 
 	if err := s.accountRepo.Create(ctx, account); err != nil {
-		s.rcloneClient.ConfigDelete(ctx, remoteName)
 		return "", fmt.Errorf("failed to create storage account: %w", err)
 	}
 
+	log.Printf("[rclone] storage account created: %s (remote: %s)", account.Label, remoteName)
 	return remoteName, nil
 }
 

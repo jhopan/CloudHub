@@ -28,6 +28,11 @@ func (c *Client) SetTimeout(timeout time.Duration) {
 	c.timeout = timeout
 }
 
+// GetConfigPath returns the rclone config file path
+func (c *Client) GetConfigPath() string {
+	return c.configPath
+}
+
 // exec runs an rclone command with timeout
 func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
