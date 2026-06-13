@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 
 	"storage-gateway/internal/api/apiutil"
 	appcrypto "storage-gateway/internal/crypto"
@@ -53,7 +54,7 @@ type VFSFile struct {
 // List lists files in the virtual filesystem
 // GET /api/v1/vfs/list?path=/
 // Path structure:
-//   /                           -> list all accounts as folders
+//   /                           -> aggregate ALL files from ALL accounts (flat list)
 //   /AccountLabel/              -> list root of that account
 //   /AccountLabel/subfolder/    -> list subfolder of that account
 func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
@@ -84,26 +85,94 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 	// Parse VFS path
 	parts := strings.Split(strings.Trim(vfsPath, "/"), "/")
 
-	// Root level: show all accounts as folders
+	// Root level: aggregate ALL files from ALL accounts into a flat list
 	if vfsPath == "/" || (len(parts) == 1 && parts[0] == "") {
-		var folders []VFSFile
+		type accountResult struct {
+			files []VFSFile
+			err   error
+		}
+
+		// Collect active accounts
+		var activeAccounts []*model.StorageAccountWithProvider
 		for _, acc := range accounts {
-			if !acc.IsActive {
+			if acc.IsActive {
+				activeAccounts = append(activeAccounts, acc)
+			}
+		}
+
+		if len(activeAccounts) == 0 {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode([]VFSFile{})
+			return
+		}
+
+		// Fetch files from all accounts concurrently
+		results := make([]accountResult, len(activeAccounts))
+		var wg sync.WaitGroup
+
+		for i, acc := range activeAccounts {
+			wg.Add(1)
+			go func(idx int, account *model.StorageAccountWithProvider) {
+				defer wg.Done()
+
+				remoteFiles, err := h.rcloneClient.Lsjson(r.Context(), account.RcloneRemoteName, "/")
+				if err != nil {
+					log.Printf("WARNING: failed to list root of account %q (%s): %v", account.Label, account.RcloneRemoteName, err)
+					results[idx] = accountResult{err: err}
+					return
+				}
+
+				var vfsFiles []VFSFile
+				for _, f := range remoteFiles {
+					fileType := "file"
+					if f.IsDir {
+						fileType = "folder"
+					}
+
+					// Build VFS path that includes account label prefix
+					var vfsFilePath string
+					if f.IsDir {
+						vfsFilePath = "/" + account.Label + strings.TrimSuffix(f.Path, "/") + "/"
+					} else {
+						vfsFilePath = "/" + account.Label + "/" + f.Path
+					}
+
+					vfsFiles = append(vfsFiles, VFSFile{
+						Name:         f.Name,
+						Path:         vfsFilePath,
+						Type:         fileType,
+						Size:         f.Size,
+						Modified:     f.ModTime.Format("2006-01-02T15:04:05Z"),
+						MimeType:     f.MimeType,
+						AccountID:    account.ID.String(),
+						AccountLabel: account.Label,
+						ProviderType: account.ProviderType,
+						ProviderIcon: account.ProviderIconURL,
+						RemotePath:   f.Path,
+					})
+				}
+				results[idx] = accountResult{files: vfsFiles}
+			}(i, acc)
+		}
+
+		wg.Wait()
+
+		// Flatten all results into a single list
+		var allFiles []VFSFile
+		for _, res := range results {
+			if res.err != nil {
+				// Skip accounts that failed, already logged above
 				continue
 			}
-			folders = append(folders, VFSFile{
-				Name:         acc.Label,
-				Path:         "/" + acc.Label + "/",
-				Type:         "folder",
-				AccountID:    acc.ID.String(),
-				AccountLabel: acc.Label,
-				ProviderType: acc.ProviderType,
-				ProviderIcon: acc.ProviderIconURL,
-				RemotePath:   "/",
-			})
+			allFiles = append(allFiles, res.files...)
 		}
+
+		if allFiles == nil {
+			allFiles = []VFSFile{}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(folders)
+		json.NewEncoder(w).Encode(allFiles)
 		return
 	}
 
