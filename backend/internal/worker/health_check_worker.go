@@ -28,10 +28,14 @@ func NewHealthCheckWorker(accountRepo *repository.StorageAccountRepository, rclo
 
 // Start begins the health check worker loop
 func (w *HealthCheckWorker) Start(ctx context.Context) {
+	// Run initial health check immediately on startup
+	log.Println("Health check worker: running initial check...")
+	w.checkHealth(ctx)
+
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
 
-	log.Println("Health check worker started")
+	log.Println("Health check worker started (interval: " + w.interval.String() + ")")
 
 	for {
 		select {
@@ -55,8 +59,6 @@ func (w *HealthCheckWorker) checkHealth(ctx context.Context) {
 		return
 	}
 
-	log.Printf("Health check: checking %d storage accounts", len(accounts))
-
 	for _, account := range accounts {
 		if !account.IsActive {
 			continue
@@ -64,23 +66,29 @@ func (w *HealthCheckWorker) checkHealth(ctx context.Context) {
 
 		// Check health using rclone about
 		aboutInfo, err := w.rcloneClient.About(ctx, account.RcloneRemoteName)
-		
+
 		now := time.Now()
+		var newStatus string
 		if err != nil {
-			log.Printf("Health check: %s (%s) UNHEALTHY: %v", account.Label, account.RcloneRemoteName, err)
-			account.HealthStatus = "unhealthy"
+			newStatus = "unhealthy"
 		} else {
-			log.Printf("Health check: %s (%s) HEALTHY", account.Label, account.RcloneRemoteName)
-			account.HealthStatus = model.HealthStatusHealthy
-			// Update capacity info from rclone about
+			newStatus = model.HealthStatusHealthy
+			// Always update capacity info from rclone about
 			if aboutInfo != nil && aboutInfo.Total > 0 {
 				account.CapacityBytes = aboutInfo.Total
 				account.UsedBytes = aboutInfo.Used
 			}
 		}
+
+		// Only log and update DB when status CHANGES
+		statusChanged := account.HealthStatus != newStatus
+		if statusChanged {
+			log.Printf("Health check: %s status changed: %s → %s", account.Label, account.HealthStatus, newStatus)
+			account.HealthStatus = newStatus
+		}
 		account.LastHealthCheck = &now
 
-		// Use UpdateHealth to avoid overwriting credentials
+		// Update health + capacity in DB
 		if err := w.accountRepo.UpdateHealth(ctx, account); err != nil {
 			log.Printf("Health check: failed to update account %s: %v", account.ID, err)
 		}

@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"storage-gateway/internal/config"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
@@ -47,7 +48,8 @@ func (r *Runner) Start() {
 
 	// Start Health Check Worker
 	accountRepo := repository.NewStorageAccountRepository(r.db)
-	rcloneClient := rclone.NewClient("rclone", "")
+	absConfigPath, _ := filepath.Abs("rclone.conf")
+	rcloneClient := rclone.NewClient("rclone", absConfigPath)
 	healthCheckWorker := NewHealthCheckWorker(accountRepo, rcloneClient, 5*time.Minute)
 	r.wg.Add(1)
 	go func() {
