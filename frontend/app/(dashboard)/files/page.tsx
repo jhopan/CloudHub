@@ -42,6 +42,9 @@ import {
   Zap,
   Shield,
   ArrowUpRight,
+  Link2,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -302,6 +305,16 @@ export default function MyFilesPage() {
   const [deletingFile, setDeletingFile] = useState<string | null>(null);
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
 
+  // Share modal state
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareFile, setShareFile] = useState<VFSFile | null>(null);
+  const [shareMaxDownloads, setShareMaxDownloads] = useState(0);
+  const [shareExpiry, setShareExpiry] = useState('24');
+  const [shareLoading, setShareLoading] = useState(false);
+  const [shareResult, setShareResult] = useState<{ url: string; token: string } | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
+
   // Abort controllers for cancellation
   const abortControllerRef = useRef<Map<string, AbortController>>(new Map());
 
@@ -483,6 +496,61 @@ export default function MyFilesPage() {
       console.error('Delete failed:', e);
     } finally {
       setDeletingFile(null);
+    }
+  };
+
+  // ─── Share ───────────────────────────────────────────────────────────────
+
+  const openShareModal = (file: VFSFile) => {
+    setShareFile(file);
+    setShareMaxDownloads(0);
+    setShareExpiry('24');
+    setShareResult(null);
+    setShareError(null);
+    setShareCopied(false);
+    setShareModalOpen(true);
+  };
+
+  const handleCreateShareLink = async () => {
+    if (!shareFile || !shareFile.account_id || !shareFile.remote_path) return;
+
+    setShareLoading(true);
+    setShareError(null);
+    try {
+      const expiresInHours = shareExpiry === 'never' ? 0 : parseInt(shareExpiry);
+      const res = await apiClient.post('/shared-links', {
+        file_name: shareFile.name,
+        account_id: shareFile.account_id,
+        remote_path: shareFile.remote_path,
+        max_downloads: shareMaxDownloads,
+        expires_in_hours: expiresInHours,
+        file_size: shareFile.size,
+      });
+      setShareResult({ url: res.data.share_url, token: res.data.token });
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { message?: string } }; message?: string };
+      setShareError(err.response?.data?.message || err.message || 'Failed to create share link');
+    } finally {
+      setShareLoading(false);
+    }
+  };
+
+  const handleCopyShareLink = async () => {
+    if (!shareResult) return;
+    try {
+      await navigator.clipboard.writeText(shareResult.url);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // Fallback
+      const textarea = document.createElement('textarea');
+      textarea.value = shareResult.url;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
     }
   };
 
@@ -1236,6 +1304,18 @@ export default function MyFilesPage() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
+                                    openShareModal(file);
+                                  }}
+                                  className="p-1.5 bg-white border border-slate-200 rounded-lg hover:bg-blue-50 hover:border-blue-200 transition-colors shadow-sm"
+                                  title="Share"
+                                >
+                                  <Link2 className="h-3 w-3 text-slate-600" />
+                                </button>
+                              )}
+                              {file.type === 'file' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     handleDownload(file);
                                   }}
                                   className="p-1.5 bg-white border border-slate-200 rounded-lg hover:bg-violet-50 hover:border-violet-200 transition-colors shadow-sm"
@@ -1374,6 +1454,18 @@ export default function MyFilesPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
+                                  openShareModal(file);
+                                }}
+                                className="p-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                                title="Share"
+                              >
+                                <Link2 className="h-3.5 w-3.5 text-slate-500" />
+                              </button>
+                            )}
+                            {file.type === 'file' && (
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   handleDownload(file);
                                 }}
                                 className="p-1.5 rounded-lg hover:bg-violet-50 transition-colors"
@@ -1404,6 +1496,14 @@ export default function MyFilesPage() {
 
                           {/* Mobile actions */}
                           <div className="flex items-center gap-1 sm:hidden">
+                            {file.type === 'file' && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); openShareModal(file); }}
+                                className="p-1.5 rounded-lg hover:bg-blue-50"
+                              >
+                                <Link2 className="h-3.5 w-3.5 text-slate-500" />
+                              </button>
+                            )}
                             {file.type === 'file' && (
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleDownload(file); }}
@@ -1580,6 +1680,162 @@ export default function MyFilesPage() {
                     })}
                   </div>
                 )}
+              </div>
+            </div>
+          )}
+
+          {/* ═══ Share Modal ═══ */}
+          {shareModalOpen && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center">
+              {/* Backdrop */}
+              <div
+                className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                onClick={() => setShareModalOpen(false)}
+              />
+
+              {/* Modal */}
+              <div className="relative z-10 w-full max-w-md mx-4 bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden animate-in zoom-in-95 fade-in duration-200">
+                {/* Header */}
+                <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 rounded-lg bg-blue-100">
+                      <Link2 className="h-4 w-4 text-blue-600" />
+                    </div>
+                    <h3 className="text-base font-semibold text-slate-900 truncate">
+                      Share {shareFile?.name}
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => setShareModalOpen(false)}
+                    className="p-1 rounded-lg hover:bg-slate-100 transition-colors"
+                  >
+                    <X className="h-4 w-4 text-slate-500" />
+                  </button>
+                </div>
+
+                {/* Body */}
+                <div className="px-6 py-5 space-y-4">
+                  {!shareResult ? (
+                    <>
+                      {/* Max Downloads */}
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-700">
+                          Max Downloads
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={shareMaxDownloads}
+                          onChange={(e) => setShareMaxDownloads(Math.max(0, parseInt(e.target.value) || 0))}
+                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400"
+                          placeholder="0 = unlimited"
+                        />
+                        <p className="text-xs text-slate-400">0 = unlimited downloads</p>
+                      </div>
+
+                      {/* Expiry */}
+                      <div className="space-y-1.5">
+                        <label className="text-sm font-medium text-slate-700">
+                          Link Expires
+                        </label>
+                        <select
+                          value={shareExpiry}
+                          onChange={(e) => setShareExpiry(e.target.value)}
+                          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 bg-white"
+                        >
+                          <option value="1">1 hour</option>
+                          <option value="24">24 hours</option>
+                          <option value="168">7 days</option>
+                          <option value="720">30 days</option>
+                          <option value="never">Never</option>
+                        </select>
+                      </div>
+
+                      {/* Error */}
+                      {shareError && (
+                        <div className="flex items-center gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                          <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
+                          <p className="text-sm text-red-600">{shareError}</p>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    /* Result */
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 p-3 bg-emerald-50 border border-emerald-200 rounded-lg">
+                        <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                        <p className="text-sm font-medium text-emerald-700">Share link created!</p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          readOnly
+                          value={shareResult.url}
+                          className="flex-1 px-3 py-2 text-sm bg-slate-50 border border-slate-200 rounded-lg font-mono text-slate-700"
+                        />
+                        <Button
+                          size="sm"
+                          onClick={handleCopyShareLink}
+                          className={shareCopied ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-blue-600 hover:bg-blue-700'}
+                        >
+                          {shareCopied ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 mr-1" />
+                              Copied
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5 mr-1" />
+                              Copy
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer */}
+                <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-slate-100 bg-slate-50/50">
+                  {!shareResult ? (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShareModalOpen(false)}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={handleCreateShareLink}
+                        disabled={shareLoading}
+                        className="bg-blue-600 hover:bg-blue-700 text-white"
+                      >
+                        {shareLoading ? (
+                          <>
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                            Creating...
+                          </>
+                        ) : (
+                          <>
+                            <Link2 className="h-3.5 w-3.5 mr-1.5" />
+                            Create Link
+                          </>
+                        )}
+                      </Button>
+                    </>
+                  ) : (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShareModalOpen(false)}
+                    >
+                      Close
+                    </Button>
+                  )}
+                </div>
               </div>
             </div>
           )}

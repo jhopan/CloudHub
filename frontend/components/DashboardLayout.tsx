@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { HardDrive, Cloud, Files, LayoutDashboard, LogOut, Menu, X, ArrowRightLeft, BarChart3, Settings, Shield } from 'lucide-react';
+import { HardDrive, Cloud, Files, LayoutDashboard, LogOut, Menu, X, ArrowRightLeft, BarChart3, Settings, Shield, Link2 } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';

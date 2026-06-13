@@ -80,6 +80,8 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, userRepo, rcloneClient, fileRepo)
 	settingsHandler := handlers.NewSettingsHandler(userRepo)
 	adminHandler := handlers.NewAdminHandler(userRepo, accountRepo, providerRepo, transferLogRepo, fileRepo, db)
+	sharedLinkRepo := repository.NewSharedLinkRepository(db)
+	sharedLinkHandler := handlers.NewSharedLinkHandler(sharedLinkRepo, accountRepo, rcloneClient)
 
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +161,11 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			// Transfer Logs
 			r.Get("/transfer-logs", transferLogHandler.GetTransferLogs)
 
+			// Shared Links (authenticated)
+			r.Post("/shared-links", sharedLinkHandler.CreateSharedLink)
+			r.Get("/shared-links", sharedLinkHandler.ListSharedLinks)
+			r.Delete("/shared-links/{id}", sharedLinkHandler.DeleteSharedLink)
+
 			// Google OAuth (protected - user must be logged in)
 			r.Get("/oauth/google/initiate", oauthHandler.InitiateOAuth)
 			r.Get("/oauth/status", oauthHandler.CheckOAuthStatus)
@@ -179,6 +186,9 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			r.Get("/admin/transfers", adminHandler.Transfers)
 			r.Get("/admin/system", adminHandler.System)
 		})
+
+		// Public routes (NO auth required)
+		r.Get("/public/share/{token}", sharedLinkHandler.DownloadSharedFile)
 	})
 
 	return r
