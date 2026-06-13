@@ -131,7 +131,13 @@ func (sr *streamReader) Close() error {
 // Delete removes a file from remote storage
 func (c *Client) Delete(ctx context.Context, remote, remotePath string) error {
 	target := fmt.Sprintf("%s:%s", remote, remotePath)
-	_, err := c.exec(ctx, "delete", target)
+
+	// Try deletefile first (for single files)
+	_, err := c.exec(ctx, "deletefile", target)
+	if err != nil {
+		// If deletefile fails (might be a directory), try purge
+		_, err = c.exec(ctx, "purge", target)
+	}
 	return err
 }
 
