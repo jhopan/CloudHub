@@ -1,19 +1,26 @@
 'use client';
 
 import { useAuth } from '@/lib/auth-context';
-import { useRouter } from 'next/navigation';
-import { useEffect } from 'react';
-import { Button } from '@/components/ui/button';
-import { HardDrive, Cloud, Files, LayoutDashboard, LogOut, Menu, X, ArrowRightLeft, BarChart3, Settings, Shield } from 'lucide-react';
-import { useState } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import {
+  HardDrive,
+  LayoutDashboard,
+  Users,
+  Cloud,
+  Database,
+  ArrowRightLeft,
+  Server,
+  LogOut,
+  Menu,
+  X,
+  ArrowLeft,
+  Shield,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
 
-interface DashboardLayoutProps {
-  children: React.ReactNode;
-}
-
-export default function DashboardLayout({ children }: DashboardLayoutProps) {
+export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { user, logout } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
@@ -22,23 +29,25 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   useEffect(() => {
     if (!user) {
       router.push('/login');
+      return;
+    }
+    if (user.role !== 'admin') {
+      router.push('/files');
     }
   }, [user, router]);
 
-  if (!user) {
+  if (!user || user.role !== 'admin') {
     return null;
   }
 
   const navItems = [
-    { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { href: '/providers', label: 'Providers', icon: Cloud },
-    { href: '/files', label: 'My Files', icon: Files },
-    { href: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
-    { href: '/usage', label: 'Usage', icon: BarChart3 },
-    { href: '/settings', label: 'Settings', icon: Settings },
+    { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
+    { href: '/admin/users', label: 'Users', icon: Users },
+    { href: '/admin/providers', label: 'Providers', icon: Cloud },
+    { href: '/admin/storage', label: 'Storage', icon: Database },
+    { href: '/admin/transfers', label: 'Transfers', icon: ArrowRightLeft },
+    { href: '/admin/system', label: 'System', icon: Server },
   ];
-
-  const isAdmin = user?.role === 'admin';
 
   const handleLogout = () => {
     logout();
@@ -71,7 +80,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
               <HardDrive className="h-6 w-6 text-primary" />
               <h1 className="text-xl font-bold">CloudHub</h1>
             </div>
-            <p className="text-sm text-muted-foreground mt-1">Storage Gateway</p>
+            <div className="flex items-center gap-1.5 mt-1.5">
+              <Shield className="h-3.5 w-3.5 text-purple-500" />
+              <p className="text-sm font-medium text-purple-600 dark:text-purple-400">Admin Panel</p>
+            </div>
           </div>
 
           {/* Navigation */}
@@ -79,7 +91,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
             <ul className="space-y-2">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const isActive = pathname === item.href;
+                const isActive =
+                  item.href === '/admin'
+                    ? pathname === '/admin'
+                    : pathname.startsWith(item.href);
                 return (
                   <li key={item.href}>
                     <Link
@@ -98,36 +113,29 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 );
               })}
             </ul>
-
-            {/* Admin Panel link - only for admin users */}
-            {isAdmin && (
-              <div className="mt-6 pt-4 border-t">
-                <p className="px-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
-                  Administration
-                </p>
-                <Link
-                  href="/admin"
-                  onClick={() => setSidebarOpen(false)}
-                  className="flex items-center gap-3 px-4 py-2 rounded-lg text-muted-foreground hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-950/30 dark:hover:text-purple-300 transition-colors"
-                >
-                  <Shield className="h-4 w-4" />
-                  <span>Admin Panel</span>
-                </Link>
-              </div>
-            )}
           </nav>
 
           {/* User section */}
-          <div className="p-4 border-t">
-            <div className="flex items-center gap-3 mb-3">
-              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                <span className="text-sm font-medium text-primary">
+          <div className="p-4 border-t space-y-3">
+            <Link
+              href="/files"
+              onClick={() => setSidebarOpen(false)}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to App
+            </Link>
+            <div className="flex items-center gap-3">
+              <div className="h-8 w-8 rounded-full bg-purple-500/10 flex items-center justify-center">
+                <span className="text-sm font-medium text-purple-600 dark:text-purple-400">
                   {user.email?.charAt(0).toUpperCase()}
                 </span>
               </div>
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium truncate">{user.email}</p>
-                <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
+                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                  Admin
+                </span>
               </div>
             </div>
             <Button

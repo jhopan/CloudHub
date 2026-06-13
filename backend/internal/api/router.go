@@ -79,6 +79,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo, userRepo)
 	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, userRepo, rcloneClient, fileRepo)
 	settingsHandler := handlers.NewSettingsHandler(userRepo)
+	adminHandler := handlers.NewAdminHandler(userRepo, accountRepo, providerRepo, transferLogRepo, fileRepo, db)
 
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -169,7 +170,14 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			r.Use(middleware.Auth(jwtManager))
 			r.Use(middleware.RequireRole("admin"))
 
-			// TODO: Add admin routes in future phases
+			r.Get("/admin/dashboard", adminHandler.Dashboard)
+			r.Get("/admin/users", adminHandler.ListUsers)
+			r.Put("/admin/users/{id}", adminHandler.UpdateUser)
+			r.Delete("/admin/users/{id}", adminHandler.DeleteUser)
+			r.Get("/admin/providers", adminHandler.ListProviders)
+			r.Get("/admin/storage-stats", adminHandler.StorageStats)
+			r.Get("/admin/transfers", adminHandler.Transfers)
+			r.Get("/admin/system", adminHandler.System)
 		})
 	})
 

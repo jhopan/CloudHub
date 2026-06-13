@@ -238,3 +238,127 @@ func (r *UserRepository) IsEncryptionEnabled(ctx context.Context, userID uuid.UU
 
 	return enabled, nil
 }
+
+// GetAll returns a paginated list of all users
+func (r *UserRepository) GetAll(ctx context.Context, page, perPage int) ([]*model.User, int, error) {
+	// Get total count
+	var total int
+	countQuery := `SELECT COUNT(*) FROM users`
+	if err := r.db.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count users: %w", err)
+	}
+
+	offset := (page - 1) * perPage
+	query := `
+		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'),
+		       COALESCE(encryption_enabled, false), encryption_salt, COALESCE(encryption_passphrase_hash, ''),
+		       created_at, updated_at
+		FROM users
+		ORDER BY created_at ASC
+		LIMIT $1 OFFSET $2
+	`
+
+	rows, err := r.db.Query(ctx, query, perPage, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to query users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*model.User
+	for rows.Next() {
+		user := &model.User{}
+		if err := rows.Scan(
+			&user.ID, &user.Email, &user.PasswordHash, &user.DisplayName, &user.Role,
+			&user.SchedulerMode, &user.EncryptionEnabled, &user.EncryptionSalt,
+			&user.EncryptionPassphraseHash, &user.CreatedAt, &user.UpdatedAt,
+		); err != nil {
+			return nil, 0, fmt.Errorf("failed to scan user: %w", err)
+		}
+		users = append(users, user)
+	}
+
+	return users, total, nil
+}
+
+// UpdateRole updates a user's role
+func (r *UserRepository) UpdateRole(ctx context.Context, userID uuid.UUID, role string) error {
+	query := `UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, role, userID)
+	if err != nil {
+		return fmt.Errorf("failed to update user role: %w", err)
+	}
+	return nil
+}
+
+// CountAll returns the total number of users
+func (r *UserRepository) CountAll(ctx context.Context) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM users`
+	err := r.db.QueryRow(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count users: %w", err)
+	}
+	return count, nil
+}
+
+// DeleteCascade deletes a user and all associated data
+func (r *UserRepository) DeleteCascade(ctx context.Context, userID uuid.UUID) error {
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// Delete file locations for user's files
+	_, err = tx.Exec(ctx, `DELETE FROM file_locations WHERE file_id IN (SELECT id FROM files WHERE user_id = $1)`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete file locations: %w", err)
+	}
+
+	// Delete user's files
+	_, err = tx.Exec(ctx, `DELETE FROM files WHERE user_id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete files: %w", err)
+	}
+
+	// Delete user's transfer logs
+	_, err = tx.Exec(ctx, `DELETE FROM transfer_logs WHERE user_id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete transfer logs: %w", err)
+	}
+
+	// Delete user's storage accounts
+	_, err = tx.Exec(ctx, `DELETE FROM storage_accounts WHERE user_id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete storage accounts: %w", err)
+	}
+
+	// Delete the user
+	_, err = tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, userID)
+	if err != nil {
+		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	return tx.Commit(ctx)
+}
+
+// GetAccountsCountByUser returns the number of storage accounts for each user
+func (r *UserRepository) GetAccountsCountByUser(ctx context.Context) (map[string]int, error) {
+	query := `SELECT user_id, COUNT(*) FROM storage_accounts GROUP BY user_id`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get accounts count: %w", err)
+	}
+	defer rows.Close()
+
+	counts := make(map[string]int)
+	for rows.Next() {
+		var userID uuid.UUID
+		var count int
+		if err := rows.Scan(&userID, &count); err != nil {
+			return nil, err
+		}
+		counts[userID.String()] = count
+	}
+	return counts, nil
+}

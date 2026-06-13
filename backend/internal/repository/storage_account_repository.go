@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"storage-gateway/internal/model"
 
@@ -224,4 +225,74 @@ func (r *StorageAccountRepository) GetAll(ctx context.Context) ([]*model.Storage
 		accounts = append(accounts, &acc)
 	}
 	return accounts, nil
+}
+
+// GetAllWithOwnerAndProvider returns all storage accounts joined with provider and user info
+func (r *StorageAccountRepository) GetAllWithOwnerAndProvider(ctx context.Context) ([]*AdminStorageAccount, error) {
+	query := `
+		SELECT 
+			sa.id, sa.user_id, sa.provider_id, sa.label, sa.rclone_remote_name,
+			sa.capacity_bytes, sa.used_bytes, sa.health_status, sa.is_active,
+			sa.created_at, sa.updated_at,
+			p.display_name as provider_display_name, p.type as provider_type,
+			u.email as owner_email
+		FROM storage_accounts sa
+		JOIN providers p ON p.id = sa.provider_id
+		JOIN users u ON u.id = sa.user_id
+		ORDER BY p.display_name, sa.label
+	`
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all accounts with details: %w", err)
+	}
+	defer rows.Close()
+
+	var accounts []*AdminStorageAccount
+	for rows.Next() {
+		var acc AdminStorageAccount
+		if err := rows.Scan(&acc.ID, &acc.UserID, &acc.ProviderID, &acc.Label, &acc.RcloneRemoteName,
+			&acc.CapacityBytes, &acc.UsedBytes, &acc.HealthStatus, &acc.IsActive,
+			&acc.CreatedAt, &acc.UpdatedAt,
+			&acc.ProviderDisplayName, &acc.ProviderType, &acc.OwnerEmail); err != nil {
+			return nil, err
+		}
+		accounts = append(accounts, &acc)
+	}
+	return accounts, nil
+}
+
+// CountAll returns total count and aggregate stats
+func (r *StorageAccountRepository) CountAll(ctx context.Context) (totalAccounts int, totalCapacity int64, totalUsed int64, activeCount int, unhealthyCount int, err error) {
+	query := `
+		SELECT 
+			COUNT(*),
+			COALESCE(SUM(capacity_bytes), 0),
+			COALESCE(SUM(used_bytes), 0),
+			COUNT(*) FILTER (WHERE is_active = true),
+			COUNT(*) FILTER (WHERE health_status = 'unhealthy')
+		FROM storage_accounts
+	`
+	err = r.db.QueryRow(ctx, query).Scan(&totalAccounts, &totalCapacity, &totalUsed, &activeCount, &unhealthyCount)
+	if err != nil {
+		return 0, 0, 0, 0, 0, fmt.Errorf("failed to count accounts: %w", err)
+	}
+	return
+}
+
+// AdminStorageAccount is an extended storage account with owner and provider info for admin views
+type AdminStorageAccount struct {
+	ID                  uuid.UUID `json:"id"`
+	UserID              uuid.UUID `json:"user_id"`
+	ProviderID          uuid.UUID `json:"provider_id"`
+	Label               string    `json:"label"`
+	RcloneRemoteName    string    `json:"rclone_remote_name"`
+	CapacityBytes       int64     `json:"capacity_bytes"`
+	UsedBytes           int64     `json:"used_bytes"`
+	HealthStatus        string    `json:"health_status"`
+	IsActive            bool      `json:"is_active"`
+	CreatedAt           time.Time `json:"created_at"`
+	UpdatedAt           time.Time `json:"updated_at"`
+	ProviderDisplayName string    `json:"provider_display_name"`
+	ProviderType        string    `json:"provider_type"`
+	OwnerEmail          string    `json:"owner_email"`
 }

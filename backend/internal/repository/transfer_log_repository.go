@@ -114,3 +114,49 @@ func (r *TransferLogRepository) CountByUser(ctx context.Context, userID uuid.UUI
 	err := r.db.QueryRow(ctx, query, userID).Scan(&count)
 	return count, err
 }
+
+// GetAllPaginated returns all transfer logs with pagination (admin)
+func (r *TransferLogRepository) GetAllPaginated(ctx context.Context, page, perPage int) ([]*model.TransferLog, int, error) {
+	var total int
+	countQuery := `SELECT COUNT(*) FROM transfer_logs`
+	if err := r.db.QueryRow(ctx, countQuery).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("failed to count transfer logs: %w", err)
+	}
+
+	offset := (page - 1) * perPage
+	query := `
+		SELECT id, file_id, user_id, account_id, operation, status, bytes_transferred,
+		       error_message, retry_count, max_retries, started_at, completed_at, created_at
+		FROM transfer_logs
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := r.db.Query(ctx, query, perPage, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to get transfer logs: %w", err)
+	}
+	defer rows.Close()
+
+	var logs []*model.TransferLog
+	for rows.Next() {
+		log := &model.TransferLog{}
+		if err := rows.Scan(&log.ID, &log.FileID, &log.UserID, &log.AccountID,
+			&log.Operation, &log.Status, &log.BytesTransferred, &log.ErrorMessage,
+			&log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		logs = append(logs, log)
+	}
+	return logs, total, nil
+}
+
+// CountToday returns the number of transfers created today
+func (r *TransferLogRepository) CountToday(ctx context.Context) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM transfer_logs WHERE created_at >= CURRENT_DATE`
+	err := r.db.QueryRow(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count today's transfers: %w", err)
+	}
+	return count, nil
+}

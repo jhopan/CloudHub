@@ -360,3 +360,14 @@ func (r *FileRepository) DeleteByVirtualPath(ctx context.Context, userID uuid.UU
 	_, err := r.db.Exec(ctx, `DELETE FROM files WHERE user_id = $1 AND virtual_path = $2`, userID, virtualPath)
 	return err
 }
+
+// CountAll returns the total number of non-directory files
+func (r *FileRepository) CountAll(ctx context.Context) (int, error) {
+	var count int
+	query := `SELECT COUNT(*) FROM files WHERE is_directory = false`
+	err := r.db.QueryRow(ctx, query).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count all files: %w", err)
+	}
+	return count, nil
+}

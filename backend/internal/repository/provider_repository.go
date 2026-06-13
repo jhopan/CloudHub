@@ -183,3 +183,56 @@ func (r *ProviderRepository) GetWithStats(ctx context.Context, userID uuid.UUID)
 
 	return results, nil
 }
+
+// AdminProviderStats represents provider stats for the admin panel
+type AdminProviderStats struct {
+	ID                 uuid.UUID `json:"id"`
+	Name               string    `json:"name"`
+	Type               string    `json:"type"`
+	DisplayName        string    `json:"display_name"`
+	IconURL            string    `json:"icon_url"`
+	AccountsCount      int       `json:"accounts_count"`
+	TotalCapacityBytes int64     `json:"total_capacity_bytes"`
+	TotalUsedBytes     int64     `json:"total_used_bytes"`
+	HealthyCount       int       `json:"healthy_count"`
+	UnhealthyCount     int       `json:"unhealthy_count"`
+}
+
+// GetAdminStats returns all providers with aggregated stats across all users
+func (r *ProviderRepository) GetAdminStats(ctx context.Context) ([]*AdminProviderStats, error) {
+	query := `
+		SELECT 
+			p.id, p.name, p.type, p.display_name, COALESCE(p.icon_url, '') as icon_url,
+			COUNT(sa.id) as accounts_count,
+			COALESCE(SUM(sa.capacity_bytes), 0) as total_capacity,
+			COALESCE(SUM(sa.used_bytes), 0) as total_used,
+			COUNT(*) FILTER (WHERE sa.health_status = 'healthy') as healthy_count,
+			COUNT(*) FILTER (WHERE sa.health_status = 'unhealthy') as unhealthy_count
+		FROM providers p
+		LEFT JOIN storage_accounts sa ON sa.provider_id = p.id
+		WHERE p.is_active = true
+		GROUP BY p.id, p.name, p.type, p.display_name, p.icon_url
+		ORDER BY p.display_name
+	`
+
+	rows, err := r.db.Query(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query admin provider stats: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*AdminProviderStats
+	for rows.Next() {
+		ps := &AdminProviderStats{}
+		if err := rows.Scan(
+			&ps.ID, &ps.Name, &ps.Type, &ps.DisplayName, &ps.IconURL,
+			&ps.AccountsCount, &ps.TotalCapacityBytes, &ps.TotalUsedBytes,
+			&ps.HealthyCount, &ps.UnhealthyCount,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan admin provider stats: %w", err)
+		}
+		results = append(results, ps)
+	}
+
+	return results, nil
+}
