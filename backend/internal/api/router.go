@@ -25,6 +25,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	r := chi.NewRouter()
 
 	// Global middleware
+	r.Use(chimiddleware.Compress(5, "application/json", "text/plain", "text/html", "application/javascript", "text/css"))
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(chimiddleware.RequestID)
