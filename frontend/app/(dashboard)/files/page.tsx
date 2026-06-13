@@ -294,6 +294,7 @@ export default function MyFilesPage() {
   const [uploads, setUploads] = useState<UploadProgress[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [uploadPanelExpanded, setUploadPanelExpanded] = useState(true);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // New folder state
@@ -649,6 +650,8 @@ export default function MyFilesPage() {
           strategy_used: data.strategy_used,
         });
         progress.upload_id = upload_id;
+        progress.account_label = data.account_label;
+        progress.strategy_used = data.strategy_used;
       } else {
         const initRes = await apiClient.post('/vfs/upload/init', {
           account_id: currentAccountId,
@@ -791,13 +794,26 @@ export default function MyFilesPage() {
       }
 
       abortControllerRef.current.delete(uploadKey);
-      fetchFiles(currentPath);
+
+      // Refresh file list - if auto-picked, navigate to the account folder
+      if (progress.auto_picked && progress.account_label) {
+        const accountPath = `/${progress.account_label}/`;
+        setCurrentPath(accountPath);
+        fetchFiles(accountPath);
+      } else {
+        fetchFiles(currentPath);
+      }
       fetchAccounts();
       fetchPool();
 
+      // Show success toast
+      const targetLabel = progress.account_label ? ` to ${progress.account_label}` : '';
+      setUploadSuccess(`${file.name} uploaded successfully${targetLabel}!`);
+      setTimeout(() => setUploadSuccess(null), 5000);
+
       setTimeout(() => {
         setUploads((prev) => prev.filter((u) => u.upload_id !== upload_id));
-      }, 4000);
+      }, 10000);
     } catch (e: unknown) {
       const err = e as { message?: string };
       console.error('Upload failed:', e);
@@ -1741,6 +1757,20 @@ export default function MyFilesPage() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* ═══ Upload Success Toast ═══ */}
+          {uploadSuccess && (
+            <div className="fixed top-4 right-4 bg-emerald-500 text-white px-4 py-2.5 rounded-lg shadow-lg z-[60] flex items-center gap-2 animate-in slide-in-from-top-2 duration-300">
+              <CheckCircle2 className="h-4 w-4 flex-shrink-0" />
+              <span className="text-sm font-medium">{uploadSuccess}</span>
+              <button
+                onClick={() => setUploadSuccess(null)}
+                className="ml-2 p-0.5 rounded hover:bg-emerald-600 transition-colors"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             </div>
           )}
 
