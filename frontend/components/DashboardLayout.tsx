@@ -4,7 +4,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 import { Button } from '@/components/ui/button';
-import { HardDrive, Cloud, Files, LayoutDashboard, LogOut, Menu, X, ArrowRightLeft, BarChart3 } from 'lucide-react';
+import { HardDrive, Cloud, Files, LayoutDashboard, LogOut, Menu, X, ArrowRightLeft, BarChart3, Settings } from 'lucide-react';
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -35,6 +35,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     { href: '/files', label: 'My Files', icon: Files },
     { href: '/transfers', label: 'Transfers', icon: ArrowRightLeft },
     { href: '/usage', label: 'Usage', icon: BarChart3 },
+    { href: '/settings', label: 'Settings', icon: Settings },
   ];
 
   const handleLogout = () => {

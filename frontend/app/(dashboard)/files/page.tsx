@@ -88,6 +88,9 @@ interface UploadProgress {
   error?: string;
   speed?: number;
   started_at: number;
+  auto_picked?: boolean;
+  account_label?: string;
+  strategy_used?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -512,7 +515,9 @@ export default function MyFilesPage() {
   // ─── Chunked Upload ──────────────────────────────────────────────────────
 
   const uploadFileChunked = async (file: File) => {
-    if (!currentAccountId) {
+    const useAutoPick = isAtRoot && !selectedAccountId;
+
+    if (!useAutoPick && !currentAccountId) {
       return;
     }
 
@@ -534,6 +539,7 @@ export default function MyFilesPage() {
       completed_chunks: 0,
       status: 'uploading',
       started_at: startedAt,
+      auto_picked: useAutoPick,
     };
 
     setUploads((prev) => [...prev, { ...progress }]);
@@ -550,19 +556,49 @@ export default function MyFilesPage() {
     };
 
     try {
-      // 1. Init upload
-      const initRes = await apiClient.post('/vfs/upload/init', {
-        account_id: currentAccountId,
-        path: remotePath === '/' ? '/' : remotePath,
-        filename: file.name,
-        total_size: totalSize,
-        chunk_size: CHUNK_SIZE,
-      });
+      // 1. Init upload — auto-pick or manual
+      let upload_id: string;
+      let total_chunks_server: number;
+      let serverChunkSize: number;
 
-      const { upload_id, total_chunks, chunk_size: serverChunkSize } = initRes.data;
-      progress.upload_id = upload_id;
+      if (useAutoPick) {
+        const initRes = await apiClient.post('/vfs/upload/auto-init', {
+          filename: file.name,
+          total_size: totalSize,
+          path: remotePath === '/' ? '/' : remotePath,
+        });
+
+        const data = initRes.data;
+        upload_id = data.upload_id;
+        total_chunks_server = data.total_chunks;
+        serverChunkSize = data.chunk_size;
+
+        // Show auto-pick info in upload panel
+        updateUpload({
+          upload_id,
+          auto_picked: true,
+          account_label: data.account_label,
+          strategy_used: data.strategy_used,
+        });
+        progress.upload_id = upload_id;
+      } else {
+        const initRes = await apiClient.post('/vfs/upload/init', {
+          account_id: currentAccountId,
+          path: remotePath === '/' ? '/' : remotePath,
+          filename: file.name,
+          total_size: totalSize,
+          chunk_size: CHUNK_SIZE,
+        });
+
+        const data = initRes.data;
+        upload_id = data.upload_id;
+        total_chunks_server = data.total_chunks;
+        serverChunkSize = data.chunk_size;
+        progress.upload_id = upload_id;
+      }
+
       const effectiveChunkSize = serverChunkSize || CHUNK_SIZE;
-      const effectiveTotalChunks = total_chunks || totalChunks;
+      const effectiveTotalChunks = total_chunks_server || totalChunks;
 
       updateUpload({
         upload_id,
@@ -651,9 +687,6 @@ export default function MyFilesPage() {
 
   const handleFileSelect = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    if (isAtRoot && !selectedAccountId) {
-      return;
-    }
     for (let i = 0; i < fileList.length; i++) {
       uploadFileChunked(fileList[i]);
     }
@@ -1012,11 +1045,12 @@ export default function MyFilesPage() {
                   <Button
                     size="sm"
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={isAtRoot && !selectedAccountId}
+                    disabled={!isAtRoot && !currentAccountId}
                     className="bg-violet-600 hover:bg-violet-700 text-white shadow-sm"
+                    title={isAtRoot && !selectedAccountId ? 'Auto-pick best account' : undefined}
                   >
                     <Upload className="h-3.5 w-3.5 mr-1.5" />
-                    Upload
+                    {isAtRoot && !selectedAccountId ? 'Auto Upload' : 'Upload'}
                   </Button>
 
                   {/* New folder */}
@@ -1093,7 +1127,9 @@ export default function MyFilesPage() {
                       <Upload className="h-10 w-10 text-violet-500 mx-auto mb-3" />
                       <p className="text-lg font-semibold text-violet-700 text-center">Drop files here</p>
                       <p className="text-sm text-slate-500 text-center mt-1">
-                        Upload to {breadcrumbs[breadcrumbs.length - 1]?.label || 'current folder'}
+                        {isAtRoot && !selectedAccountId
+                          ? 'Auto-pick best account'
+                          : `Upload to ${breadcrumbs[breadcrumbs.length - 1]?.label || 'current folder'}`}
                       </p>
                     </div>
                   </div>
@@ -1526,6 +1562,19 @@ export default function MyFilesPage() {
                               </span>
                             </div>
                           </div>
+
+                          {/* Auto-pick info */}
+                          {upload.auto_picked && upload.account_label && (
+                            <div className="mt-1.5 flex items-center gap-1.5">
+                              <Zap className="h-3 w-3 text-violet-500 flex-shrink-0" />
+                              <span className="text-[10px] text-violet-600 font-medium truncate">
+                                Auto → {upload.account_label}
+                                {upload.strategy_used && (
+                                  <span className="text-violet-400 font-normal"> via {upload.strategy_used.replace(/_/g, ' ')}</span>
+                                )}
+                              </span>
+                            </div>
+                          )}
                         </div>
                       );
                     })}
