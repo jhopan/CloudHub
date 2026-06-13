@@ -1,103 +1,135 @@
-version: '3.8'
+# ==============================================================================
+# CloudHub Storage Gateway - Docker Compose
+# Optimized for 1 GB RAM VPS deployment
+# ==============================================================================
+# Usage:
+#   docker-compose up -d          # Start all services
+#   docker-compose up backend     # Start only backend + dependencies
+#   docker-compose logs -f        # Follow logs
+#   docker-compose down -v        # Stop and remove volumes
+# ==============================================================================
 
 services:
+  # ─── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
-    container_name: storage-gateway-db
+    container_name: sg-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: storage_gateway
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_PASSWORD: storage_gw_secret_2024
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    command: >
+      postgres
+      -c shared_buffers=64MB
+      -c max_connections=20
+      -c work_mem=4MB
+      -c maintenance_work_mem=32MB
+      -c effective_cache_size=64MB
+      -c wal_buffers=2MB
+      -c checkpoint_completion_target=0.9
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
+      interval: 5s
       timeout: 5s
-      retries: 5
-    networks:
-      - storage-gateway-network
+      retries: 10
+      start_period: 10s
 
+  # ─── Redis ───────────────────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    container_name: storage-gateway-redis
-    command: redis-server --appendonly yes
-    volumes:
-      - redis_data:/data
+    container_name: sg-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 32mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+      --tcp-backlog 128
     ports:
       - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 64M
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
+      interval: 5s
       timeout: 3s
       retries: 5
-    networks:
-      - storage-gateway-network
 
+  # ─── Go Backend ──────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
-      dockerfile: ../infra/docker/Dockerfile.backend
-    container_name: storage-gateway-backend
-    environment:
-      PORT: 8080
-      DATABASE_URL: postgres://postgres:***@postgres:5432/storage_gateway?sslmode=disable
-      REDIS_ADDR: redis:6379
-      JWT_SECRET: ${JWT_SECRET}
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
-      RCLONE_PATH: /usr/bin/rclone
-      RCLONE_CONFIG_PATH: /etc/rclone/rclone.conf
-    volumes:
-      - rclone_config:/etc/rclone
-      - temp_uploads:/tmp/uploads
+      dockerfile: Dockerfile
+    container_name: sg-backend
+    restart: unless-stopped
     ports:
       - "8080:8080"
+    environment:
+      # Server
+      PORT: "8080"
+      ENVIRONMENT: production
+      # Database
+      DATABASE_URL: postgres://postgres:storage_gw_secret_2024@postgres:5432/storage_gateway?sslmode=disable
+      # Redis (host:port format for viper)
+      REDIS_ADDR: redis:6379
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      # JWT
+      JWT_SECRET: change-this-to-random-secret-in-production
+      JWT_ACCESS_TOKEN_TTL: "900"
+      JWT_REFRESH_TOKEN_TTL: "604800"
+      # Encryption (must be exactly 32 characters)
+      ENCRYPTION_KEY: CloudHub32CharEncryptionKey2026X
+      # rclone
+      RCLONE_PATH: rclone
+      RCLONE_CONFIG_PATH: /app/data/rclone.conf
+      # Upload
+      MAX_UPLOAD_SIZE: "10737418240"
+      UPLOAD_CONCURRENCY: "10"
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - storage-gateway-network
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    volumes:
+      - rclone_data:/app/data
 
+  # ─── Next.js Frontend ───────────────────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
-      dockerfile: ../infra/docker/Dockerfile.frontend
-    container_name: storage-gateway-frontend
-    environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
+      dockerfile: Dockerfile
+    container_name: sg-frontend
+    restart: unless-stopped
     ports:
       - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
     depends_on:
       - backend
-    restart: unless-stopped
-    networks:
-      - storage-gateway-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: storage-gateway-nginx
-    volumes:
-      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-    ports:
-      - "80:80"
-    depends_on:
-      - frontend
-      - backend
-    restart: unless-stopped
-    networks:
-      - storage-gateway-network
+    deploy:
+      resources:
+        limits:
+          memory: 128M
 
 volumes:
   postgres_data:
-  redis_data:
-  rclone_config:
-  temp_uploads:
-
-networks:
-  storage-gateway-network:
-    name: storage-gateway-network
+    driver: local
+  rclone_data:
+    driver: local

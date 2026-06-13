@@ -1,0 +1,15 @@
+# Root .dockerignore for docker-compose build context
+.git
+.gitignore
+.env
+.env.*
+*.md
+.vscode
+.idea
+.github
+docs/
+infra/
+scripts/
+SETUP.md
+README.md
+LICENSE
