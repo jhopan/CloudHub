@@ -87,7 +87,7 @@ interface UploadProgress {
   uploaded_bytes: number;
   total_chunks: number;
   completed_chunks: number;
-  status: 'uploading' | 'finalizing' | 'complete' | 'error' | 'paused';
+  status: 'uploading' | 'finalizing' | 'complete' | 'error' | 'paused' | 'restarting';
   error?: string;
   speed?: number;
   started_at: number;
@@ -98,7 +98,7 @@ interface UploadProgress {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const CHUNK_SIZE = 1 * 1024 * 1024; // 1MB
+const CHUNK_SIZE = 10 * 1024 * 1024; // 10MB
 
 // ─── Provider Config ─────────────────────────────────────────────────────────
 
@@ -367,7 +367,7 @@ export default function MyFilesPage() {
   }, [filteredFiles]);
 
   const activeUploads = uploads.filter(
-    (u) => u.status === 'uploading' || u.status === 'finalizing' || u.status === 'error' || u.status === 'paused'
+    (u) => u.status === 'uploading' || u.status === 'finalizing' || u.status === 'error' || u.status === 'paused' || u.status === 'restarting'
   );
   const completedUploads = uploads.filter((u) => u.status === 'complete');
 
@@ -676,8 +676,11 @@ export default function MyFilesPage() {
       const controller = new AbortController();
       abortControllerRef.current.set(uploadKey, controller);
 
-      // 2. Upload chunks
+      // 2. Upload chunks with resume capability
+      const MAX_RESTART_ATTEMPTS = 3;
       let uploadedBytes = 0;
+      let restartAttempts = 0;
+
       for (let i = 0; i < effectiveTotalChunks; i++) {
         if (controller.signal.aborted) {
           updateUpload({ status: 'paused', error: 'Upload cancelled' });
@@ -691,15 +694,22 @@ export default function MyFilesPage() {
         let retries = 0;
         const maxRetries = 3;
         let chunkUploaded = false;
+        let needsRestart = false;
 
-        while (retries < maxRetries && !chunkUploaded) {
+        while (retries < maxRetries && !chunkUploaded && !needsRestart) {
           try {
             await apiClient.put(`/vfs/upload/${upload_id}/chunk/${i}`, chunk, {
               headers: { 'Content-Type': 'application/octet-stream' },
               signal: controller.signal,
             });
             chunkUploaded = true;
-          } catch (chunkErr) {
+          } catch (chunkErr: unknown) {
+            const err = chunkErr as { response?: { data?: { needs_restart?: boolean } } };
+            // Check if the backend signalled that the rclone process died
+            if (err.response?.data?.needs_restart) {
+              needsRestart = true;
+              break;
+            }
             retries++;
             if (retries >= maxRetries) {
               try {
@@ -716,6 +726,38 @@ export default function MyFilesPage() {
             }
             await new Promise((resolve) => setTimeout(resolve, 1000 * retries));
           }
+        }
+
+        // Handle restart: rclone process died, need to restart upload
+        if (needsRestart) {
+          if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
+            throw new Error(`Upload failed after ${MAX_RESTART_ATTEMPTS} restart attempts`);
+          }
+          restartAttempts++;
+          updateUpload({
+            status: 'restarting',
+            error: `Restarting... (attempt ${restartAttempts}/${MAX_RESTART_ATTEMPTS})`,
+          });
+
+          // Brief delay before restarting
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+
+          try {
+            await apiClient.post(`/vfs/upload/${upload_id}/restart`);
+          } catch {
+            throw new Error('Failed to restart upload — server rejected restart request');
+          }
+
+          // Reset progress and restart from chunk 0
+          uploadedBytes = 0;
+          i = -1; // will become 0 on next loop iteration
+          updateUpload({
+            status: 'uploading',
+            error: restartAttempts > 0 ? `Resumed (attempt ${restartAttempts})` : undefined,
+            uploaded_bytes: 0,
+            completed_chunks: 0,
+          });
+          continue;
         }
 
         uploadedBytes += end - start;
@@ -1597,6 +1639,8 @@ export default function MyFilesPage() {
                                 <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0" />
                               ) : upload.status === 'paused' ? (
                                 <MoreVertical className="h-4 w-4 text-slate-400 flex-shrink-0" />
+                              ) : upload.status === 'restarting' ? (
+                                <RefreshCw className="h-4 w-4 animate-spin text-amber-500 flex-shrink-0" />
                               ) : (
                                 <Loader2 className="h-4 w-4 animate-spin text-violet-500 flex-shrink-0" />
                               )}
@@ -1610,7 +1654,7 @@ export default function MyFilesPage() {
                                   {speedStr}
                                 </span>
                               )}
-                              {(upload.status === 'uploading' || upload.status === 'error' || upload.status === 'paused') &&
+                              {(upload.status === 'uploading' || upload.status === 'restarting' || upload.status === 'error' || upload.status === 'paused') &&
                                 upload.upload_id && (
                                   <button
                                     onClick={() => cancelUpload(upload.upload_id)}
@@ -1630,6 +1674,8 @@ export default function MyFilesPage() {
                                   ? 'bg-emerald-500'
                                   : upload.status === 'error'
                                   ? 'bg-red-500'
+                                  : upload.status === 'restarting'
+                                  ? 'bg-amber-400 animate-pulse'
                                   : upload.status === 'finalizing'
                                   ? 'bg-violet-400 animate-pulse'
                                   : upload.status === 'paused'

@@ -135,6 +135,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			r.Put("/vfs/upload/{upload_id}/chunk/{chunk_number}", chunkedUploadHandler.UploadChunk)
 			r.Get("/vfs/upload/{upload_id}/status", chunkedUploadHandler.GetUploadStatus)
 			r.Post("/vfs/upload/{upload_id}/finalize", chunkedUploadHandler.FinalizeUpload)
+			r.Post("/vfs/upload/{upload_id}/restart", chunkedUploadHandler.RestartUpload)
 			r.Delete("/vfs/upload/{upload_id}", chunkedUploadHandler.CancelUpload)
 
 			// Settings

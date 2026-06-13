@@ -176,7 +176,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if req.ChunkSize <= 0 {
-		req.ChunkSize = 1 * 1024 * 1024 // 1MB default
+		req.ChunkSize = 10 * 1024 * 1024 // 10MB default
 	}
 
 	accountID, err := uuid.Parse(req.AccountID)
@@ -317,11 +317,17 @@ func (h *ChunkedUploadHandler) uploadChunkStreaming(w http.ResponseWriter, r *ht
 	// Check if rclone process has already failed
 	select {
 	case <-session.processDone:
-		errMsg := "rclone process terminated unexpectedly"
-		if session.processErr != nil {
-			errMsg = fmt.Sprintf("rclone process failed: %v, stderr: %s", session.processErr, session.stderrBuf.String())
-		}
-		apiutil.InternalError(w, errMsg)
+		log.Printf("rclone process died for upload %s (chunk %d): %v, stderr: %s",
+			session.ID, chunkNum, session.processErr, session.stderrBuf.String())
+		h.mu.RLock()
+		received := session.ChunksReceived
+		h.mu.RUnlock()
+		apiutil.RespondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error":            "upload_process_died",
+			"message":          "Upload process interrupted. Please restart.",
+			"chunks_accepted":  received,
+			"needs_restart":    true,
+		})
 		return
 	default:
 	}
@@ -335,8 +341,17 @@ func (h *ChunkedUploadHandler) uploadChunkStreaming(w http.ResponseWriter, r *ht
 		// Check if the process died
 		select {
 		case <-session.processDone:
-			stderrStr := session.stderrBuf.String()
-			apiutil.InternalError(w, fmt.Sprintf("rclone process failed during write: %v, stderr: %s", session.processErr, stderrStr))
+			log.Printf("rclone process died during write for upload %s (chunk %d): %v, stderr: %s",
+				session.ID, chunkNum, session.processErr, session.stderrBuf.String())
+			h.mu.RLock()
+			received := session.ChunksReceived
+			h.mu.RUnlock()
+			apiutil.RespondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"error":            "upload_process_died",
+				"message":          "Upload process interrupted during chunk transfer. Please restart.",
+				"chunks_accepted":  received,
+				"needs_restart":    true,
+			})
 		default:
 			apiutil.InternalError(w, "failed to write chunk to stream: "+err.Error())
 		}
@@ -660,6 +675,95 @@ func (h *ChunkedUploadHandler) trackFileMetadata(r *http.Request, session *Uploa
 	}
 }
 
+// RestartUpload restarts a streaming upload whose rclone process has died.
+// It kills the old process (if still alive), deletes the incomplete remote file,
+// starts a fresh rclone rcat, and resets the chunk counters so the frontend can
+// re-upload all chunks from the beginning.
+// POST /api/v1/vfs/upload/{upload_id}/restart
+func (h *ChunkedUploadHandler) RestartUpload(w http.ResponseWriter, r *http.Request) {
+	uploadID := r.PathValue("upload_id")
+
+	h.mu.Lock()
+	session, exists := h.uploads[uploadID]
+	h.mu.Unlock()
+
+	if !exists {
+		apiutil.NotFound(w, "upload session not found")
+		return
+	}
+
+	if !session.UseStreaming {
+		apiutil.BadRequest(w, "restart is only supported for streaming uploads")
+		return
+	}
+
+	// 1. Kill old rclone process if still alive
+	if session.StdinPipe != nil {
+		session.StdinPipe.Close()
+	}
+	if session.Cmd != nil && session.Cmd.Process != nil {
+		session.Cmd.Process.Kill()
+	}
+
+	// 2. Wait for old process to exit (with short timeout)
+	if session.processDone != nil {
+		select {
+		case <-session.processDone:
+			// process exited
+		case <-time.After(5 * time.Second):
+			log.Printf("WARNING: timed out waiting for old rclone process to exit during restart of upload %s", uploadID)
+		}
+	}
+
+	// 3. Delete the incomplete file from cloud storage (best-effort)
+	if err := h.rcloneClient.Delete(r.Context(), session.RemoteName, session.RemotePath); err != nil {
+		log.Printf("WARNING: failed to delete incomplete file %s:%s during restart: %v",
+			session.RemoteName, session.RemotePath, err)
+	}
+
+	// 4. Start a fresh rclone rcat process
+	cmd, stdinPipe, stderrBuf, err := h.startRcloneRcat(session.RemoteName, session.RemotePath)
+	if err != nil {
+		// Clean up session on failure
+		h.mu.Lock()
+		delete(h.uploads, uploadID)
+		h.mu.Unlock()
+		apiutil.InternalError(w, "failed to restart streaming upload: "+err.Error())
+		return
+	}
+
+	// 5. Update session with new process, reset counters
+	h.mu.Lock()
+	session.Cmd = cmd
+	session.StdinPipe = stdinPipe
+	session.stderrBuf = stderrBuf
+	session.ChunksReceived = 0
+	session.BytesReceived = 0
+	session.processDone = make(chan struct{})
+	session.processErr = nil
+	session.UpdatedAt = time.Now()
+	// Reset the per-session mutex (old one may be locked if goroutine died mid-write)
+	session.sessionMu = sync.Mutex{}
+	h.mu.Unlock()
+
+	// 6. Monitor new rclone process in background
+	go func() {
+		defer close(session.processDone)
+		session.processErr = cmd.Wait()
+	}()
+
+	log.Printf("restarted streaming upload %s (%s) — new rclone rcat process started", uploadID, session.FileName)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success":         true,
+		"upload_id":       uploadID,
+		"chunks_accepted": 0,
+		"total_chunks":    session.TotalChunks,
+		"message":         "upload restarted — re-upload all chunks from beginning",
+	})
+}
+
 // CancelUpload cancels an upload session.
 // For streaming: kills the rclone process.
 // For encrypted: removes temp files.
@@ -724,7 +828,7 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 	}
 
 	if req.ChunkSize <= 0 {
-		req.ChunkSize = 1 * 1024 * 1024 // 1MB default
+		req.ChunkSize = 10 * 1024 * 1024 // 10MB default
 	}
 
 	// 1. Get user's scheduler_mode from DB
