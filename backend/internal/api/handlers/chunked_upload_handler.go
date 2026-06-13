@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"storage-gateway/internal/api/apiutil"
+	appcrypto "storage-gateway/internal/crypto"
 	"storage-gateway/internal/model"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
@@ -34,19 +35,20 @@ type ChunkedUploadHandler struct {
 }
 
 type UploadSession struct {
-	ID             string
-	UserID         uuid.UUID
-	AccountID      uuid.UUID
-	AccountLabel   string
-	RemoteName     string
-	FileName       string
-	RemotePath     string
-	TotalSize      int64
-	TotalChunks    int
-	ChunkSize      int64
-	ReceivedChunks map[int]bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                   string
+	UserID               uuid.UUID
+	AccountID            uuid.UUID
+	AccountLabel         string
+	RemoteName           string
+	FileName             string
+	RemotePath           string
+	TotalSize            int64
+	TotalChunks          int
+	ChunkSize            int64
+	ReceivedChunks       map[int]bool
+	EncryptionPassphrase string // optional, for file encryption
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
@@ -87,7 +89,7 @@ func (h *ChunkedUploadHandler) cleanupStaleSessions() {
 
 // InitUpload initiates a new chunked upload session
 // POST /api/v1/vfs/upload/init
-// Body: { "account_id": "xxx", "path": "/folder", "filename": "file.zip", "total_size": 1048576, "chunk_size": 5242880 }
+// Body: { "account_id": "xxx", "path": "/folder", "filename": "file.zip", "total_size": 1048576, "chunk_size": 5242880, "encryption_passphrase": "optional" }
 func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserID(r)
 	if err != nil {
@@ -96,11 +98,12 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	var req struct {
-		AccountID string `json:"account_id"`
-		Path      string `json:"path"`
-		FileName  string `json:"filename"`
-		TotalSize int64  `json:"total_size"`
-		ChunkSize int64  `json:"chunk_size"` // default 5MB
+		AccountID            string `json:"account_id"`
+		Path                 string `json:"path"`
+		FileName             string `json:"filename"`
+		TotalSize            int64  `json:"total_size"`
+		ChunkSize            int64  `json:"chunk_size"` // default 5MB
+		EncryptionPassphrase string `json:"encryption_passphrase"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiutil.BadRequest(w, "invalid request body")
@@ -133,6 +136,26 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// If encryption passphrase provided, verify encryption is enabled and passphrase is correct
+	if req.EncryptionPassphrase != "" {
+		encEnabled, _ := h.userRepo.IsEncryptionEnabled(r.Context(), userID)
+		if !encEnabled {
+			apiutil.BadRequest(w, "encryption is not enabled for this user")
+			return
+		}
+		// Verify passphrase
+		storedHash, err := h.userRepo.GetEncryptionPassphraseHash(r.Context(), userID)
+		if err != nil || storedHash == "" {
+			apiutil.BadRequest(w, "encryption passphrase not configured")
+			return
+		}
+		valid, err := appcrypto.VerifyPassphrase(req.EncryptionPassphrase, storedHash)
+		if err != nil || !valid {
+			apiutil.BadRequest(w, "invalid encryption passphrase")
+			return
+		}
+	}
+
 	totalChunks := int((req.TotalSize + req.ChunkSize - 1) / req.ChunkSize)
 	uploadID := uuid.New().String()
 
@@ -143,19 +166,20 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	remotePath += req.FileName
 
 	session := &UploadSession{
-		ID:             uploadID,
-		UserID:         userID,
-		AccountID:      accountID,
-		AccountLabel:   account.Label,
-		RemoteName:     account.RcloneRemoteName,
-		FileName:       req.FileName,
-		RemotePath:     remotePath,
-		TotalSize:      req.TotalSize,
-		TotalChunks:    totalChunks,
-		ChunkSize:      req.ChunkSize,
-		ReceivedChunks: make(map[int]bool),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:                   uploadID,
+		UserID:               userID,
+		AccountID:            accountID,
+		AccountLabel:         account.Label,
+		RemoteName:           account.RcloneRemoteName,
+		FileName:             req.FileName,
+		RemotePath:           remotePath,
+		TotalSize:            req.TotalSize,
+		TotalChunks:          totalChunks,
+		ChunkSize:            req.ChunkSize,
+		ReceivedChunks:       make(map[int]bool),
+		EncryptionPassphrase: req.EncryptionPassphrase,
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
 	}
 
 	// Create temp directory for chunks
@@ -171,6 +195,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 		"upload_id":    uploadID,
 		"total_chunks": totalChunks,
 		"chunk_size":   req.ChunkSize,
+		"encrypted":    req.EncryptionPassphrase != "",
 	})
 }
 

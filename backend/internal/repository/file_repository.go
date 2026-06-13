@@ -20,24 +20,24 @@ func NewFileRepository(db *pgxpool.Pool) *FileRepository {
 
 func (r *FileRepository) Create(ctx context.Context, file *model.File) error {
 	query := `
-		INSERT INTO files (id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO files (id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory, is_encrypted)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
-		file.ID, file.UserID, file.Name, file.VirtualPath, file.Size, file.Checksum, file.MimeType, file.ParentID, file.IsDirectory,
+		file.ID, file.UserID, file.Name, file.VirtualPath, file.Size, file.Checksum, file.MimeType, file.ParentID, file.IsDirectory, file.IsEncrypted,
 	).Scan(&file.CreatedAt, &file.UpdatedAt)
 }
 
 func (r *FileRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.File, error) {
 	file := &model.File{}
 	query := `
-		SELECT id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory, created_at, updated_at
+		SELECT id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory, COALESCE(is_encrypted, false), created_at, updated_at
 		FROM files WHERE id = $1
 	`
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&file.ID, &file.UserID, &file.Name, &file.VirtualPath, &file.Size, &file.Checksum,
-		&file.MimeType, &file.ParentID, &file.IsDirectory, &file.CreatedAt, &file.UpdatedAt,
+		&file.MimeType, &file.ParentID, &file.IsDirectory, &file.IsEncrypted, &file.CreatedAt, &file.UpdatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("file not found: %w", err)
@@ -122,12 +122,12 @@ func (r *FileRepository) Delete(ctx context.Context, id uuid.UUID) error {
 // Location methods
 func (r *FileRepository) AddLocation(ctx context.Context, loc *model.FileLocation) error {
 	query := `
-		INSERT INTO file_locations (id, file_id, account_id, remote_path, chunk_index, chunk_size, checksum)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO file_locations (id, file_id, account_id, remote_path, chunk_index, chunk_size, checksum, is_encrypted)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at
 	`
 	return r.db.QueryRow(ctx, query,
-		loc.ID, loc.FileID, loc.AccountID, loc.RemotePath, loc.ChunkIndex, loc.ChunkSize, loc.Checksum,
+		loc.ID, loc.FileID, loc.AccountID, loc.RemotePath, loc.ChunkIndex, loc.ChunkSize, loc.Checksum, loc.IsEncrypted,
 	).Scan(&loc.CreatedAt)
 }
 
@@ -339,18 +339,19 @@ func (r *FileRepository) GetLocationByAccountAndPath(ctx context.Context, accoun
 // Upsert creates or updates a file based on user_id + virtual_path unique constraint
 func (r *FileRepository) Upsert(ctx context.Context, file *model.File) error {
 	query := `
-		INSERT INTO files (id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO files (id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory, is_encrypted)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT (user_id, virtual_path) DO UPDATE SET
 			name = EXCLUDED.name,
 			size = EXCLUDED.size,
 			checksum = EXCLUDED.checksum,
 			mime_type = EXCLUDED.mime_type,
+			is_encrypted = EXCLUDED.is_encrypted,
 			updated_at = NOW()
 		RETURNING id, created_at, updated_at
 	`
 	return r.db.QueryRow(ctx, query,
-		file.ID, file.UserID, file.Name, file.VirtualPath, file.Size, file.Checksum, file.MimeType, file.ParentID, file.IsDirectory,
+		file.ID, file.UserID, file.Name, file.VirtualPath, file.Size, file.Checksum, file.MimeType, file.ParentID, file.IsDirectory, file.IsEncrypted,
 	).Scan(&file.ID, &file.CreatedAt, &file.UpdatedAt)
 }
 

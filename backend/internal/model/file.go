@@ -17,6 +17,7 @@ type File struct {
 	MimeType    string     `db:"mime_type" json:"mime_type"`
 	ParentID    *uuid.UUID `db:"parent_id" json:"parent_id"`
 	IsDirectory bool       `db:"is_directory" json:"is_directory"`
+	IsEncrypted bool       `db:"is_encrypted" json:"is_encrypted"`
 	CreatedAt   time.Time  `db:"created_at" json:"created_at"`
 	UpdatedAt   time.Time  `db:"updated_at" json:"updated_at"`
 }
@@ -30,5 +31,6 @@ type FileLocation struct {
 	ChunkIndex  int       `db:"chunk_index" json:"chunk_index"`
 	ChunkSize   int64     `db:"chunk_size" json:"chunk_size"`
 	Checksum    string    `db:"checksum" json:"checksum"`
+	IsEncrypted bool      `db:"is_encrypted" json:"is_encrypted"`
 	CreatedAt   time.Time `db:"created_at" json:"created_at"`
 }

@@ -76,7 +76,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	usageHandler := handlers.NewUsageHandler(usageService)
 	oauthHandler := handlers.NewOAuthHandler(rcloneOAuthService)
 	accountFileHandler := handlers.NewAccountFileHandler(accountRepo, rcloneClient)
-	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo)
+	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo, userRepo)
 	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, userRepo, rcloneClient, fileRepo)
 	settingsHandler := handlers.NewSettingsHandler(userRepo)
 
@@ -137,6 +137,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			// Settings
 			r.Get("/settings", settingsHandler.GetSettings)
 			r.Put("/settings", settingsHandler.UpdateSettings)
+			r.Put("/settings/encryption", settingsHandler.UpdateEncryptionSettings)
 
 			// Storage Pool
 			r.Get("/storage-pool", providerHandler.GetStoragePool)

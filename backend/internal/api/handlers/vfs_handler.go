@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"storage-gateway/internal/api/apiutil"
+	appcrypto "storage-gateway/internal/crypto"
 	"storage-gateway/internal/model"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
@@ -19,16 +20,18 @@ import (
 // VFSHandler handles global virtual filesystem operations
 // Aggregates files from all storage accounts into a single virtual view
 type VFSHandler struct {
-	accountRepo  *repository.StorageAccountRepository
+	accountRepo *repository.StorageAccountRepository
 	rcloneClient *rclone.Client
-	fileRepo     *repository.FileRepository
+	fileRepo    *repository.FileRepository
+	userRepo    *repository.UserRepository
 }
 
-func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *VFSHandler {
+func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, userRepo *repository.UserRepository) *VFSHandler {
 	return &VFSHandler{
-		accountRepo:  accountRepo,
+		accountRepo: accountRepo,
 		rcloneClient: rcloneClient,
-		fileRepo:     fileRepo,
+		fileRepo:    fileRepo,
+		userRepo:    userRepo,
 	}
 }
 
@@ -236,6 +239,51 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 	filename := filePath
 	if idx := strings.LastIndex(filePath, "/"); idx >= 0 {
 		filename = filePath[idx+1:]
+	}
+
+	// Check if file is encrypted (.enc extension)
+	isEncrypted := strings.HasSuffix(filename, ".enc")
+	if isEncrypted {
+		// Strip .enc from download filename
+		filename = strings.TrimSuffix(filename, ".enc")
+	}
+
+	// If encrypted, decrypt before streaming
+	if isEncrypted {
+		passphrase := r.URL.Query().Get("passphrase")
+		if passphrase == "" {
+			passphrase = r.Header.Get("X-Encryption-Passphrase")
+		}
+		if passphrase == "" {
+			apiutil.BadRequest(w, "passphrase required for encrypted file (use ?passphrase=xxx or X-Encryption-Passphrase header)")
+			return
+		}
+
+		// Get user's encryption salt
+		salt, err := h.userRepo.GetEncryptionSalt(r.Context(), userID)
+		if err != nil || salt == nil {
+			apiutil.InternalError(w, "encryption salt not found")
+			return
+		}
+
+		// Create decryptor
+		enc, err := appcrypto.NewFileEncryptor(passphrase, salt)
+		if err != nil {
+			apiutil.InternalError(w, "failed to create decryptor: "+err.Error())
+			return
+		}
+
+		// Decrypt stream
+		decReader, err := enc.DecryptStream(reader)
+		if err != nil {
+			apiutil.InternalError(w, "decryption failed (wrong passphrase?): "+err.Error())
+			return
+		}
+
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+		w.Header().Set("Content-Type", "application/octet-stream")
+		io.Copy(w, decReader)
+		return
 	}
 
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))

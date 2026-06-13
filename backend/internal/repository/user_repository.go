@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"storage-gateway/internal/crypto"
 	"storage-gateway/internal/model"
 
 	"github.com/google/uuid"
@@ -45,7 +46,9 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 	user := &model.User{}
 
 	query := `
-		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'), created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'),
+		       COALESCE(encryption_enabled, false), encryption_salt, COALESCE(encryption_passphrase_hash, ''),
+		       created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -57,6 +60,9 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 		&user.DisplayName,
 		&user.Role,
 		&user.SchedulerMode,
+		&user.EncryptionEnabled,
+		&user.EncryptionSalt,
+		&user.EncryptionPassphraseHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -72,7 +78,9 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 	user := &model.User{}
 
 	query := `
-		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'), created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'),
+		       COALESCE(encryption_enabled, false), encryption_salt, COALESCE(encryption_passphrase_hash, ''),
+		       created_at, updated_at
 		FROM users
 		WHERE email = $1
 	`
@@ -84,6 +92,9 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 		&user.DisplayName,
 		&user.Role,
 		&user.SchedulerMode,
+		&user.EncryptionEnabled,
+		&user.EncryptionSalt,
+		&user.EncryptionPassphraseHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -144,4 +155,86 @@ func (r *UserRepository) SetSchedulerMode(ctx context.Context, userID uuid.UUID,
 	}
 
 	return nil
+}
+
+// SetEncryptionPassphrase generates a salt, stores it along with a hashed passphrase for verification
+func (r *UserRepository) SetEncryptionPassphrase(ctx context.Context, userID uuid.UUID, passphrase string) error {
+	// Generate encryption salt (for file encryption key derivation)
+	salt, err := crypto.GenerateSalt()
+	if err != nil {
+		return fmt.Errorf("failed to generate salt: %w", err)
+	}
+
+	// Hash passphrase for verification
+	hash, err := crypto.HashPassphrase(passphrase)
+	if err != nil {
+		return fmt.Errorf("failed to hash passphrase: %w", err)
+	}
+
+	query := `
+		UPDATE users
+		SET encryption_enabled = true,
+		    encryption_salt = $1,
+		    encryption_passphrase_hash = $2,
+		    updated_at = NOW()
+		WHERE id = $3
+	`
+
+	_, err = r.db.Exec(ctx, query, salt, hash, userID)
+	if err != nil {
+		return fmt.Errorf("failed to set encryption passphrase: %w", err)
+	}
+
+	return nil
+}
+
+// GetEncryptionSalt returns the encryption salt for a user (for key derivation)
+func (r *UserRepository) GetEncryptionSalt(ctx context.Context, userID uuid.UUID) ([]byte, error) {
+	var salt []byte
+	query := `SELECT encryption_salt FROM users WHERE id = $1 AND encryption_enabled = true`
+
+	err := r.db.QueryRow(ctx, query, userID).Scan(&salt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get encryption salt: %w", err)
+	}
+
+	return salt, nil
+}
+
+// GetEncryptionPassphraseHash returns the stored passphrase hash for verification
+func (r *UserRepository) GetEncryptionPassphraseHash(ctx context.Context, userID uuid.UUID) (string, error) {
+	var hash string
+	query := `SELECT COALESCE(encryption_passphrase_hash, '') FROM users WHERE id = $1 AND encryption_enabled = true`
+
+	err := r.db.QueryRow(ctx, query, userID).Scan(&hash)
+	if err != nil {
+		return "", fmt.Errorf("failed to get encryption passphrase hash: %w", err)
+	}
+
+	return hash, nil
+}
+
+// SetEncryptionEnabled toggles encryption on/off for a user
+func (r *UserRepository) SetEncryptionEnabled(ctx context.Context, userID uuid.UUID, enabled bool) error {
+	query := `UPDATE users SET encryption_enabled = $1, updated_at = NOW() WHERE id = $2`
+
+	_, err := r.db.Exec(ctx, query, enabled, userID)
+	if err != nil {
+		return fmt.Errorf("failed to set encryption enabled: %w", err)
+	}
+
+	return nil
+}
+
+// IsEncryptionEnabled checks if encryption is enabled for a user
+func (r *UserRepository) IsEncryptionEnabled(ctx context.Context, userID uuid.UUID) (bool, error) {
+	var enabled bool
+	query := `SELECT COALESCE(encryption_enabled, false) FROM users WHERE id = $1`
+
+	err := r.db.QueryRow(ctx, query, userID).Scan(&enabled)
+	if err != nil {
+		return false, fmt.Errorf("failed to check encryption enabled: %w", err)
+	}
+
+	return enabled, nil
 }
