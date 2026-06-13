@@ -132,7 +132,7 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 					// Build VFS path that includes account label prefix
 					var vfsFilePath string
 					if f.IsDir {
-						vfsFilePath = "/" + account.Label + strings.TrimSuffix(f.Path, "/") + "/"
+						vfsFilePath = "/" + account.Label + "/" + strings.TrimSuffix(f.Path, "/") + "/"
 					} else {
 						vfsFilePath = "/" + account.Label + "/" + f.Path
 					}
