@@ -45,7 +45,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 	user := &model.User{}
 
 	query := `
-		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'), created_at, updated_at
 		FROM users
 		WHERE id = $1
 	`
@@ -56,6 +56,7 @@ func (r *UserRepository) GetByID(ctx context.Context, id uuid.UUID) (*model.User
 		&user.PasswordHash,
 		&user.DisplayName,
 		&user.Role,
+		&user.SchedulerMode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -71,7 +72,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 	user := &model.User{}
 
 	query := `
-		SELECT id, email, password_hash, display_name, role, created_at, updated_at
+		SELECT id, email, password_hash, display_name, role, COALESCE(scheduler_mode, 'largest_free'), created_at, updated_at
 		FROM users
 		WHERE email = $1
 	`
@@ -82,6 +83,7 @@ func (r *UserRepository) GetByEmail(ctx context.Context, email string) (*model.U
 		&user.PasswordHash,
 		&user.DisplayName,
 		&user.Role,
+		&user.SchedulerMode,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -114,6 +116,31 @@ func (r *UserRepository) Delete(ctx context.Context, id uuid.UUID) error {
 	_, err := r.db.Exec(ctx, query, id)
 	if err != nil {
 		return fmt.Errorf("failed to delete user: %w", err)
+	}
+
+	return nil
+}
+
+// GetSchedulerMode returns the scheduler mode for a user
+func (r *UserRepository) GetSchedulerMode(ctx context.Context, userID uuid.UUID) (string, error) {
+	var mode string
+	query := `SELECT COALESCE(scheduler_mode, 'largest_free') FROM users WHERE id = $1`
+
+	err := r.db.QueryRow(ctx, query, userID).Scan(&mode)
+	if err != nil {
+		return "largest_free", fmt.Errorf("failed to get scheduler mode: %w", err)
+	}
+
+	return mode, nil
+}
+
+// SetSchedulerMode updates the scheduler mode for a user
+func (r *UserRepository) SetSchedulerMode(ctx context.Context, userID uuid.UUID, mode string) error {
+	query := `UPDATE users SET scheduler_mode = $1, updated_at = NOW() WHERE id = $2`
+
+	_, err := r.db.Exec(ctx, query, mode, userID)
+	if err != nil {
+		return fmt.Errorf("failed to set scheduler mode: %w", err)
 	}
 
 	return nil

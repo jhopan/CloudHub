@@ -17,6 +17,7 @@ import (
 	"storage-gateway/internal/model"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
+	"storage-gateway/internal/scheduler"
 
 	"github.com/google/uuid"
 )
@@ -24,6 +25,7 @@ import (
 // ChunkedUploadHandler handles resumable chunked file uploads
 type ChunkedUploadHandler struct {
 	accountRepo  *repository.StorageAccountRepository
+	userRepo     *repository.UserRepository
 	rcloneClient *rclone.Client
 	fileRepo     *repository.FileRepository
 	uploads      map[string]*UploadSession
@@ -47,12 +49,13 @@ type UploadSession struct {
 	UpdatedAt      time.Time
 }
 
-func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
+func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
 	tempDir := filepath.Join(os.TempDir(), "storage-gateway-uploads")
 	os.MkdirAll(tempDir, 0755)
 
 	h := &ChunkedUploadHandler{
 		accountRepo:  accountRepo,
+		userRepo:     userRepo,
 		rcloneClient: rcloneClient,
 		fileRepo:     fileRepo,
 		uploads:      make(map[string]*UploadSession),
@@ -394,4 +397,114 @@ func (h *ChunkedUploadHandler) CancelUpload(w http.ResponseWriter, r *http.Reque
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "upload cancelled"})
+}
+
+// AutoInitUpload initiates a chunked upload with automatic account selection via scheduler
+// POST /api/v1/vfs/upload/auto-init
+// Body: { "filename": "photo.jpg", "total_size": 5242880, "path": "/Documents/", "chunk_size": 5242880 }
+func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Request) {
+	userID, err := getUserID(r)
+	if err != nil {
+		apiutil.Unauthorized(w, "authentication required")
+		return
+	}
+
+	var req struct {
+		FileName  string `json:"filename"`
+		TotalSize int64  `json:"total_size"`
+		Path      string `json:"path"`
+		ChunkSize int64  `json:"chunk_size"` // optional, default 5MB
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		apiutil.BadRequest(w, "invalid request body")
+		return
+	}
+
+	if req.FileName == "" || req.TotalSize <= 0 {
+		apiutil.BadRequest(w, "filename and total_size are required")
+		return
+	}
+
+	if req.ChunkSize <= 0 {
+		req.ChunkSize = 5 * 1024 * 1024 // 5MB default
+	}
+
+	// 1. Get user's scheduler_mode from DB
+	mode, err := h.userRepo.GetSchedulerMode(r.Context(), userID)
+	if err != nil {
+		apiutil.InternalError(w, "failed to retrieve scheduler mode")
+		return
+	}
+
+	// 2. Get all active accounts for the user
+	accounts, err := h.accountRepo.GetByUserID(r.Context(), userID)
+	if err != nil {
+		apiutil.InternalError(w, "failed to retrieve storage accounts")
+		return
+	}
+
+	// Convert to []*model.StorageAccount and filter active only
+	var activeAccounts []*model.StorageAccount
+	for _, acc := range accounts {
+		if acc.IsActive {
+			activeAccounts = append(activeAccounts, &acc.StorageAccount)
+		}
+	}
+
+	if len(activeAccounts) == 0 {
+		apiutil.BadRequest(w, "no active storage accounts found; add one first")
+		return
+	}
+
+	// 3. Use scheduler to pick the best account
+	sched := scheduler.NewSchedulerFromString(mode)
+	selected, err := sched.SelectAccount(activeAccounts, req.TotalSize)
+	if err != nil {
+		apiutil.BadRequest(w, "scheduler could not find a suitable account: "+err.Error())
+		return
+	}
+
+	// 4. Proceed with normal upload init
+	totalChunks := int((req.TotalSize + req.ChunkSize - 1) / req.ChunkSize)
+	uploadID := uuid.New().String()
+
+	remotePath := req.Path
+	if !strings.HasSuffix(remotePath, "/") {
+		remotePath += "/"
+	}
+	remotePath += req.FileName
+
+	session := &UploadSession{
+		ID:             uploadID,
+		UserID:         userID,
+		AccountID:      selected.ID,
+		AccountLabel:   selected.Label,
+		RemoteName:     selected.RcloneRemoteName,
+		FileName:       req.FileName,
+		RemotePath:     remotePath,
+		TotalSize:      req.TotalSize,
+		TotalChunks:    totalChunks,
+		ChunkSize:      req.ChunkSize,
+		ReceivedChunks: make(map[int]bool),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+	}
+
+	// Create temp directory for chunks
+	sessionDir := filepath.Join(h.tempDir, uploadID)
+	os.MkdirAll(sessionDir, 0755)
+
+	h.mu.Lock()
+	h.uploads[uploadID] = session
+	h.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"upload_id":      uploadID,
+		"account_id":     selected.ID.String(),
+		"account_label":  selected.Label,
+		"total_chunks":   totalChunks,
+		"chunk_size":     req.ChunkSize,
+		"strategy_used":  string(sched.GetStrategy()),
+	})
 }

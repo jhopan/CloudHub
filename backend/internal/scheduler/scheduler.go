@@ -123,3 +123,45 @@ func (s *Scheduler) usagePercent(acc *model.StorageAccount) float64 {
 	}
 	return float64(acc.UsedBytes) / float64(acc.CapacityBytes) * 100
 }
+
+// GetStrategy returns the current strategy used by the scheduler
+func (s *Scheduler) GetStrategy() Strategy {
+	return s.strategy
+}
+
+// NewSchedulerFromString creates a new scheduler from a strategy name string.
+// Falls back to StrategyLargestFree if the string is not recognized.
+func NewSchedulerFromString(mode string) *Scheduler {
+	switch Strategy(mode) {
+	case StrategyLargestFree:
+		return NewScheduler(StrategyLargestFree)
+	case StrategyRoundRobin:
+		return NewScheduler(StrategyRoundRobin)
+	case StrategyBalanced:
+		return NewScheduler(StrategyBalanced)
+	case StrategyCheapest:
+		return NewScheduler(StrategyCheapest)
+	default:
+		return NewScheduler(StrategyLargestFree)
+	}
+}
+
+// ValidStrategies returns all valid strategy names
+func ValidStrategies() []string {
+	return []string{
+		string(StrategyLargestFree),
+		string(StrategyRoundRobin),
+		string(StrategyBalanced),
+		string(StrategyCheapest),
+	}
+}
+
+// IsValidStrategy checks if a strategy name is valid
+func IsValidStrategy(mode string) bool {
+	switch Strategy(mode) {
+	case StrategyLargestFree, StrategyRoundRobin, StrategyBalanced, StrategyCheapest:
+		return true
+	default:
+		return false
+	}
+}
