@@ -76,8 +76,8 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	usageHandler := handlers.NewUsageHandler(usageService)
 	oauthHandler := handlers.NewOAuthHandler(rcloneOAuthService)
 	accountFileHandler := handlers.NewAccountFileHandler(accountRepo, rcloneClient)
-	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient)
-	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, rcloneClient)
+	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo)
+	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, rcloneClient, fileRepo)
 
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +123,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			r.Get("/vfs/download", vfsHandler.Download)
 			r.Post("/vfs/mkdir", vfsHandler.Mkdir)
 			r.Delete("/vfs/delete", vfsHandler.Delete)
+			r.Post("/vfs/sync", vfsHandler.Sync)
 
 			// Chunked Upload (resumable)
 			r.Post("/vfs/upload/init", chunkedUploadHandler.InitUpload)

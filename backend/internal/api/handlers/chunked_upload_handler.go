@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"storage-gateway/internal/api/apiutil"
+	"storage-gateway/internal/model"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
 
@@ -23,33 +25,36 @@ import (
 type ChunkedUploadHandler struct {
 	accountRepo  *repository.StorageAccountRepository
 	rcloneClient *rclone.Client
+	fileRepo     *repository.FileRepository
 	uploads      map[string]*UploadSession
 	mu           sync.RWMutex
 	tempDir      string
 }
 
 type UploadSession struct {
-	ID           string
-	UserID       uuid.UUID
-	AccountID    uuid.UUID
-	RemoteName   string
-	FileName     string
-	RemotePath   string
-	TotalSize    int64
-	TotalChunks  int
-	ChunkSize    int64
+	ID             string
+	UserID         uuid.UUID
+	AccountID      uuid.UUID
+	AccountLabel   string
+	RemoteName     string
+	FileName       string
+	RemotePath     string
+	TotalSize      int64
+	TotalChunks    int
+	ChunkSize      int64
 	ReceivedChunks map[int]bool
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
 }
 
-func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client) *ChunkedUploadHandler {
+func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
 	tempDir := filepath.Join(os.TempDir(), "storage-gateway-uploads")
 	os.MkdirAll(tempDir, 0755)
 
 	h := &ChunkedUploadHandler{
 		accountRepo:  accountRepo,
 		rcloneClient: rcloneClient,
+		fileRepo:     fileRepo,
 		uploads:      make(map[string]*UploadSession),
 		tempDir:      tempDir,
 	}
@@ -138,6 +143,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 		ID:             uploadID,
 		UserID:         userID,
 		AccountID:      accountID,
+		AccountLabel:   account.Label,
 		RemoteName:     account.RcloneRemoteName,
 		FileName:       req.FileName,
 		RemotePath:     remotePath,
@@ -329,6 +335,32 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	h.mu.Lock()
 	delete(h.uploads, uploadID)
 	h.mu.Unlock()
+
+	// Track file in metadata (best-effort, don't fail the upload)
+	virtualPath := "/" + session.AccountLabel + session.RemotePath
+	fileRecord := &model.File{
+		ID:          uuid.New(),
+		UserID:      session.UserID,
+		Name:        session.FileName,
+		VirtualPath: virtualPath,
+		Size:        session.TotalSize,
+		IsDirectory: false,
+	}
+	if err := h.fileRepo.Upsert(r.Context(), fileRecord); err != nil {
+		log.Printf("WARNING: failed to track file in metadata: %v", err)
+	} else {
+		loc := &model.FileLocation{
+			ID:         uuid.New(),
+			FileID:     fileRecord.ID,
+			AccountID:  session.AccountID,
+			RemotePath: session.RemotePath,
+			ChunkIndex: 0,
+			ChunkSize:  session.TotalSize,
+		}
+		if err := h.fileRepo.AddLocation(r.Context(), loc); err != nil {
+			log.Printf("WARNING: failed to track file location: %v", err)
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{

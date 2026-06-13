@@ -205,6 +205,22 @@ func (c *Client) Lsjson(ctx context.Context, remote, remotePath string) ([]FileI
 	return files, nil
 }
 
+// LsjsonRecursive lists all files recursively in a remote directory
+func (c *Client) LsjsonRecursive(ctx context.Context, remote, remotePath string) ([]FileInfo, error) {
+	target := fmt.Sprintf("%s:%s", remote, remotePath)
+	output, err := c.exec(ctx, "lsjson", target, "--recurse")
+	if err != nil {
+		return nil, err
+	}
+
+	var files []FileInfo
+	if err := json.Unmarshal(output, &files); err != nil {
+		return nil, err
+	}
+
+	return files, nil
+}
+
 // Version returns rclone version
 func (c *Client) Version(ctx context.Context) (string, error) {
 	output, err := c.exec(ctx, "version")

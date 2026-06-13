@@ -238,3 +238,124 @@ func (r *FileRepository) GetAllLocations(ctx context.Context) ([]*model.FileLoca
 	}
 	return locations, nil
 }
+
+// GetByVirtualPath finds a file by user_id and virtual_path
+func (r *FileRepository) GetByVirtualPath(ctx context.Context, userID uuid.UUID, virtualPath string) (*model.File, error) {
+	file := &model.File{}
+	query := `
+		SELECT id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory, created_at, updated_at
+		FROM files WHERE user_id = $1 AND virtual_path = $2
+	`
+	err := r.db.QueryRow(ctx, query, userID, virtualPath).Scan(
+		&file.ID, &file.UserID, &file.Name, &file.VirtualPath, &file.Size, &file.Checksum,
+		&file.MimeType, &file.ParentID, &file.IsDirectory, &file.CreatedAt, &file.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return file, nil
+}
+
+// ListByPathPrefix lists files under a virtual path prefix for a user
+func (r *FileRepository) ListByPathPrefix(ctx context.Context, userID uuid.UUID, pathPrefix string) ([]*model.File, error) {
+	query := `
+		SELECT f.id, f.user_id, f.name, f.virtual_path, f.size, f.checksum, f.mime_type, 
+		       f.parent_id, f.is_directory, f.created_at, f.updated_at
+		FROM files f
+		WHERE f.user_id = $1 AND f.virtual_path LIKE $2
+		ORDER BY f.is_directory DESC, f.name ASC
+		LIMIT 1000
+	`
+	rows, err := r.db.Query(ctx, query, userID, pathPrefix+"%")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list by path: %w", err)
+	}
+	defer rows.Close()
+
+	var files []*model.File
+	for rows.Next() {
+		f := &model.File{}
+		if err := rows.Scan(&f.ID, &f.UserID, &f.Name, &f.VirtualPath, &f.Size, &f.Checksum,
+			&f.MimeType, &f.ParentID, &f.IsDirectory, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, nil
+}
+
+// GetFileStats returns aggregate stats for a user's files
+func (r *FileRepository) GetFileStats(ctx context.Context, userID uuid.UUID) (totalFiles int64, totalSize int64, err error) {
+	query := `
+		SELECT COALESCE(COUNT(*), 0), COALESCE(SUM(size), 0)
+		FROM files WHERE user_id = $1 AND is_directory = false
+	`
+	err = r.db.QueryRow(ctx, query, userID).Scan(&totalFiles, &totalSize)
+	return
+}
+
+// GetLocationsByAccount returns all file locations for a specific account
+func (r *FileRepository) GetLocationsByAccount(ctx context.Context, accountID uuid.UUID) ([]*model.FileLocation, error) {
+	query := `
+		SELECT id, file_id, account_id, remote_path, chunk_index, chunk_size, checksum, created_at
+		FROM file_locations WHERE account_id = $1
+		ORDER BY created_at
+	`
+	rows, err := r.db.Query(ctx, query, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var locs []*model.FileLocation
+	for rows.Next() {
+		l := &model.FileLocation{}
+		if err := rows.Scan(&l.ID, &l.FileID, &l.AccountID, &l.RemotePath,
+			&l.ChunkIndex, &l.ChunkSize, &l.Checksum, &l.CreatedAt); err != nil {
+			return nil, err
+		}
+		locs = append(locs, l)
+	}
+	return locs, nil
+}
+
+// GetLocationByAccountAndPath finds a file location by account and remote path
+func (r *FileRepository) GetLocationByAccountAndPath(ctx context.Context, accountID uuid.UUID, remotePath string) (*model.FileLocation, error) {
+	loc := &model.FileLocation{}
+	query := `
+		SELECT id, file_id, account_id, remote_path, chunk_index, chunk_size, checksum, created_at
+		FROM file_locations WHERE account_id = $1 AND remote_path = $2
+	`
+	err := r.db.QueryRow(ctx, query, accountID, remotePath).Scan(
+		&loc.ID, &loc.FileID, &loc.AccountID, &loc.RemotePath,
+		&loc.ChunkIndex, &loc.ChunkSize, &loc.Checksum, &loc.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return loc, nil
+}
+
+// Upsert creates or updates a file based on user_id + virtual_path unique constraint
+func (r *FileRepository) Upsert(ctx context.Context, file *model.File) error {
+	query := `
+		INSERT INTO files (id, user_id, name, virtual_path, size, checksum, mime_type, parent_id, is_directory)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (user_id, virtual_path) DO UPDATE SET
+			name = EXCLUDED.name,
+			size = EXCLUDED.size,
+			checksum = EXCLUDED.checksum,
+			mime_type = EXCLUDED.mime_type,
+			updated_at = NOW()
+		RETURNING id, created_at, updated_at
+	`
+	return r.db.QueryRow(ctx, query,
+		file.ID, file.UserID, file.Name, file.VirtualPath, file.Size, file.Checksum, file.MimeType, file.ParentID, file.IsDirectory,
+	).Scan(&file.ID, &file.CreatedAt, &file.UpdatedAt)
+}
+
+// DeleteByVirtualPath deletes a file by user_id and virtual_path
+func (r *FileRepository) DeleteByVirtualPath(ctx context.Context, userID uuid.UUID, virtualPath string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM files WHERE user_id = $1 AND virtual_path = $2`, userID, virtualPath)
+	return err
+}

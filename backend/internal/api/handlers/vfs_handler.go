@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 
 	"storage-gateway/internal/api/apiutil"
+	"storage-gateway/internal/model"
 	"storage-gateway/internal/rclone"
 	"storage-gateway/internal/repository"
 
@@ -19,12 +21,14 @@ import (
 type VFSHandler struct {
 	accountRepo  *repository.StorageAccountRepository
 	rcloneClient *rclone.Client
+	fileRepo     *repository.FileRepository
 }
 
-func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client) *VFSHandler {
+func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *VFSHandler {
 	return &VFSHandler{
 		accountRepo:  accountRepo,
 		rcloneClient: rcloneClient,
+		fileRepo:     fileRepo,
 	}
 }
 
@@ -282,6 +286,30 @@ func (h *VFSHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Track directory in metadata (best-effort)
+	virtualPath := "/" + account.Label + req.Path
+	if !strings.HasSuffix(virtualPath, "/") {
+		virtualPath += "/"
+	}
+	dirName := req.Path
+	if idx := strings.LastIndex(strings.TrimSuffix(req.Path, "/"), "/"); idx >= 0 {
+		dirName = req.Path[idx+1:]
+	}
+	dirName = strings.TrimSuffix(dirName, "/")
+	if dirName == "" {
+		dirName = req.Path
+	}
+	dirRecord := &model.File{
+		ID:          uuid.New(),
+		UserID:      userID,
+		Name:        dirName,
+		VirtualPath: virtualPath,
+		IsDirectory: true,
+	}
+	if err := h.fileRepo.Upsert(r.Context(), dirRecord); err != nil {
+		log.Printf("WARNING: failed to track directory in metadata: %v", err)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "folder created"})
 }
@@ -325,6 +353,167 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clean up metadata (best-effort)
+	virtualPath := "/" + account.Label + filePath
+	if file, err := h.fileRepo.GetByVirtualPath(r.Context(), userID, virtualPath); err == nil {
+		if locErr := h.fileRepo.DeleteLocations(r.Context(), file.ID); locErr != nil {
+			log.Printf("WARNING: failed to delete file locations: %v", locErr)
+		}
+	}
+	if delErr := h.fileRepo.DeleteByVirtualPath(r.Context(), userID, virtualPath); delErr != nil {
+		log.Printf("WARNING: failed to delete file metadata: %v", delErr)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
+}
+
+// Sync synchronizes file metadata from remote storage accounts
+// POST /api/v1/vfs/sync
+// Body (optional): { "account_id": "xxx" }
+func (h *VFSHandler) Sync(w http.ResponseWriter, r *http.Request) {
+	userID, err := getUserID(r)
+	if err != nil {
+		apiutil.Unauthorized(w, "authentication required")
+		return
+	}
+
+	// Optional account_id parameter from query or body
+	accountIDStr := r.URL.Query().Get("account_id")
+
+	// Also check request body for account_id
+	if accountIDStr == "" {
+		var req struct {
+			AccountID string `json:"account_id"`
+		}
+		if r.Body != nil && r.ContentLength > 0 {
+			json.NewDecoder(r.Body).Decode(&req)
+			accountIDStr = req.AccountID
+		}
+	}
+
+	type accountInfo struct {
+		ID             uuid.UUID
+		Label          string
+		RcloneRemoteName string
+		UserID         uuid.UUID
+	}
+
+	var accounts []accountInfo
+
+	if accountIDStr != "" {
+		accountID, err := uuid.Parse(accountIDStr)
+		if err != nil {
+			apiutil.BadRequest(w, "invalid account_id")
+			return
+		}
+		account, err := h.accountRepo.GetByID(r.Context(), accountID)
+		if err != nil {
+			apiutil.NotFound(w, "account not found")
+			return
+		}
+		if account.UserID != userID {
+			apiutil.Forbidden(w, "access denied")
+			return
+		}
+		accounts = append(accounts, accountInfo{
+			ID:               account.ID,
+			Label:            account.Label,
+			RcloneRemoteName: account.RcloneRemoteName,
+			UserID:           account.UserID,
+		})
+	} else {
+		allAccounts, err := h.accountRepo.GetByUserID(r.Context(), userID)
+		if err != nil {
+			apiutil.InternalError(w, "failed to get accounts: "+err.Error())
+			return
+		}
+		for _, acc := range allAccounts {
+			if !acc.IsActive {
+				continue
+			}
+			accounts = append(accounts, accountInfo{
+				ID:               acc.ID,
+				Label:            acc.Label,
+				RcloneRemoteName: acc.RcloneRemoteName,
+				UserID:           acc.UserID,
+			})
+		}
+	}
+
+	if len(accounts) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"message":      "sync complete",
+			"files_synced": 0,
+		})
+		return
+	}
+
+	totalSynced := 0
+	var syncErrors []string
+
+	for _, acc := range accounts {
+		files, err := h.rcloneClient.LsjsonRecursive(r.Context(), acc.RcloneRemoteName, "/")
+		if err != nil {
+			syncErrors = append(syncErrors, fmt.Sprintf("account %s: %v", acc.Label, err))
+			continue
+		}
+
+		for _, f := range files {
+			if f.IsDir {
+				continue
+			}
+
+			// Build virtual path: /AccountLabel/remote/path
+			virtualPath := "/" + acc.Label + "/" + f.Path
+
+			fileRecord := &model.File{
+				ID:          uuid.New(),
+				UserID:      userID,
+				Name:        f.Name,
+				VirtualPath: virtualPath,
+				Size:        f.Size,
+				MimeType:    f.MimeType,
+				IsDirectory: false,
+			}
+
+			if err := h.fileRepo.Upsert(r.Context(), fileRecord); err != nil {
+				log.Printf("WARNING: failed to upsert file %s: %v", virtualPath, err)
+				continue
+			}
+
+			// Build remote path with leading /
+			remotePath := "/" + f.Path
+
+			// Delete existing locations for this file and re-add
+			h.fileRepo.DeleteLocations(r.Context(), fileRecord.ID)
+
+			loc := &model.FileLocation{
+				ID:         uuid.New(),
+				FileID:     fileRecord.ID,
+				AccountID:  acc.ID,
+				RemotePath: remotePath,
+				ChunkIndex: 0,
+				ChunkSize:  f.Size,
+			}
+			if err := h.fileRepo.AddLocation(r.Context(), loc); err != nil {
+				log.Printf("WARNING: failed to add location for %s: %v", virtualPath, err)
+				continue
+			}
+
+			totalSynced++
+		}
+	}
+
+	response := map[string]interface{}{
+		"message":      "sync complete",
+		"files_synced": totalSynced,
+	}
+	if len(syncErrors) > 0 {
+		response["errors"] = syncErrors
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
