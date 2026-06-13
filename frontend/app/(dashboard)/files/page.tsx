@@ -305,6 +305,7 @@ export default function MyFilesPage() {
   // Action states
   const [deletingFile, setDeletingFile] = useState<string | null>(null);
   const [downloadingFile, setDownloadingFile] = useState<string | null>(null);
+  const [deleteConfirmFile, setDeleteConfirmFile] = useState<VFSFile | null>(null);
 
   // Share modal state
   const [shareModalOpen, setShareModalOpen] = useState(false);
@@ -477,12 +478,15 @@ export default function MyFilesPage() {
 
   // ─── Delete ──────────────────────────────────────────────────────────────
 
-  const handleDelete = async (file: VFSFile) => {
+  const requestDelete = (file: VFSFile) => {
     if (!file.account_id || !file.remote_path) return;
-    const confirmed = window.confirm(
-      `Delete "${file.name}"${file.type === 'directory' ? ' and all its contents' : ''}?`
-    );
-    if (!confirmed) return;
+    setDeleteConfirmFile(file);
+  };
+
+  const confirmDelete = async () => {
+    const file = deleteConfirmFile;
+    if (!file) return;
+    setDeleteConfirmFile(null);
 
     const key = file.path;
     setDeletingFile(key);
@@ -1403,7 +1407,7 @@ export default function MyFilesPage() {
                               <button
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleDelete(file);
+                                  requestDelete(file);
                                 }}
                                 className="p-1.5 bg-white border border-slate-200 rounded-lg hover:bg-red-50 hover:border-red-200 transition-colors shadow-sm"
                                 title="Delete"
@@ -1553,7 +1557,7 @@ export default function MyFilesPage() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleDelete(file);
+                                requestDelete(file);
                               }}
                               className="p-1.5 rounded-lg hover:bg-red-50 transition-colors"
                               title="Delete"
@@ -1585,7 +1589,7 @@ export default function MyFilesPage() {
                               </button>
                             )}
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleDelete(file); }}
+                              onClick={(e) => { e.stopPropagation(); requestDelete(file); }}
                               className="p-1.5 rounded-lg hover:bg-red-50"
                             >
                               <Trash2 className="h-3.5 w-3.5 text-slate-500" />
@@ -1925,6 +1929,60 @@ export default function MyFilesPage() {
                       Close
                     </Button>
                   )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ═══ Delete Confirmation Overlay ═══ */}
+          {deleteConfirmFile && (
+            <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+                 onClick={() => setDeleteConfirmFile(null)}>
+              <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in-95"
+                   onClick={(e) => e.stopPropagation()}>
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-10 w-10 rounded-full bg-red-100 flex items-center justify-center">
+                    <Trash2 className="h-5 w-5 text-red-600" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-slate-900">Delete File</h3>
+                    <p className="text-sm text-slate-500">This action cannot be undone</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 rounded-lg p-3 mb-6">
+                  <div className="flex items-center gap-2">
+                    {deleteConfirmFile.type === 'directory' ? (
+                      <Folder className="h-5 w-5 text-amber-500" />
+                    ) : (
+                      <File className="h-5 w-5 text-blue-500" />
+                    )}
+                    <span className="text-sm font-medium text-slate-800 truncate">
+                      {deleteConfirmFile.name}
+                    </span>
+                  </div>
+                  {deleteConfirmFile.type === 'directory' && (
+                    <p className="text-xs text-red-500 mt-2">
+                      ⚠️ This will delete the folder and ALL its contents
+                    </p>
+                  )}
+                  {deleteConfirmFile.size > 0 && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      Size: {deleteConfirmFile.size > 1048576
+                        ? `${(deleteConfirmFile.size / 1048576).toFixed(1)} MB`
+                        : `${(deleteConfirmFile.size / 1024).toFixed(1)} KB`}
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <Button variant="outline" onClick={() => setDeleteConfirmFile(null)}>
+                    Cancel
+                  </Button>
+                  <Button variant="destructive" onClick={confirmDelete} className="bg-red-600 hover:bg-red-700">
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </Button>
                 </div>
               </div>
             </div>
