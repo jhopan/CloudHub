@@ -491,7 +491,14 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	h.mu.RUnlock()
 
 	if !exists {
-		apiutil.NotFound(w, "upload session not found")
+		// Upload already finalized (session deleted) or never existed.
+		// Return success to make finalize idempotent and prevent frontend errors.
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":           true,
+			"message":           "Upload already finalized",
+			"already_finalized": true,
+		})
 		return
 	}
 

@@ -771,10 +771,24 @@ export default function MyFilesPage() {
         });
       }
 
-      // 3. Finalize
-      updateUpload({ status: 'finalizing' });
-      await apiClient.post(`/vfs/upload/${upload_id}/finalize`);
-      updateUpload({ status: 'complete', uploaded_bytes: totalSize });
+      // 3. Finalize (with guard to prevent double-finalize)
+      let finalized = false;
+      try {
+        if (!finalized) {
+          finalized = true;
+          updateUpload({ status: 'finalizing' });
+          await apiClient.post(`/vfs/upload/${upload_id}/finalize`);
+        }
+        updateUpload({ status: 'complete', uploaded_bytes: totalSize });
+      } catch (finalizeErr: unknown) {
+        // If 404 or already_finalized, the upload was already completed — treat as success
+        const fErr = finalizeErr as { response?: { status?: number; data?: { already_finalized?: boolean } } };
+        if (fErr?.response?.status === 404 || fErr?.response?.data?.already_finalized) {
+          updateUpload({ status: 'complete', uploaded_bytes: totalSize });
+        } else {
+          throw finalizeErr;
+        }
+      }
 
       abortControllerRef.current.delete(uploadKey);
       fetchFiles(currentPath);
