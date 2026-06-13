@@ -1,12 +1,14 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -23,7 +25,10 @@ import (
 	"github.com/google/uuid"
 )
 
-// ChunkedUploadHandler handles resumable chunked file uploads
+// ChunkedUploadHandler handles resumable chunked file uploads.
+// Non-encrypted uploads use a zero-storage streaming approach:
+// chunks are piped directly into an rclone rcat process via stdin.
+// Encrypted uploads fall back to a temp-file approach (merge → encrypt → upload).
 type ChunkedUploadHandler struct {
 	accountRepo  *repository.StorageAccountRepository
 	userRepo     *repository.UserRepository
@@ -31,9 +36,12 @@ type ChunkedUploadHandler struct {
 	fileRepo     *repository.FileRepository
 	uploads      map[string]*UploadSession
 	mu           sync.RWMutex
-	tempDir      string
+	tempDir      string // only used for encrypted uploads
 }
 
+// UploadSession represents an in-progress chunked upload.
+// When UseStreaming is true, data flows directly through Cmd/StdinPipe.
+// When UseStreaming is false (encrypted fallback), chunks go to tempDir.
 type UploadSession struct {
 	ID                   string
 	UserID               uuid.UUID
@@ -45,10 +53,24 @@ type UploadSession struct {
 	TotalSize            int64
 	TotalChunks          int
 	ChunkSize            int64
-	ReceivedChunks       map[int]bool
-	EncryptionPassphrase string // optional, for file encryption
-	CreatedAt            time.Time
-	UpdatedAt            time.Time
+	EncryptionPassphrase string
+
+	// Streaming mode fields (UseStreaming == true)
+	UseStreaming   bool
+	Cmd            *exec.Cmd       // rclone rcat process
+	StdinPipe      io.WriteCloser  // stdin pipe to rclone
+	stderrBuf      *bytes.Buffer   // captures rclone stderr for error reporting
+	sessionMu      sync.Mutex      // serialises writes to stdin pipe
+	ChunksReceived int             // sequential chunk counter (streaming)
+	BytesReceived  int64           // total bytes piped so far
+	processDone    chan struct{}    // closed when rclone process exits
+	processErr     error           // set when rclone process exits with error
+
+	// Encrypted fallback fields (UseStreaming == false)
+	ReceivedChunks map[int]bool
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
@@ -64,22 +86,36 @@ func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, u
 		tempDir:      tempDir,
 	}
 
-	// Cleanup stale sessions every 30 minutes
+	// Cleanup stale sessions every 10 minutes
 	go h.cleanupStaleSessions()
 
 	return h
 }
 
+// cleanupStaleSessions kills streaming processes and removes temp files for
+// sessions that have been idle for more than 30 minutes.
 func (h *ChunkedUploadHandler) cleanupStaleSessions() {
-	ticker := time.NewTicker(30 * time.Minute)
+	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		h.mu.Lock()
 		for id, session := range h.uploads {
-			if time.Since(session.UpdatedAt) > 2*time.Hour {
-				// Remove temp files
-				sessionDir := filepath.Join(h.tempDir, id)
-				os.RemoveAll(sessionDir)
+			if time.Since(session.UpdatedAt) > 30*time.Minute {
+				if session.UseStreaming {
+					// Kill the rclone process
+					if session.Cmd != nil && session.Cmd.Process != nil {
+						session.Cmd.Process.Kill()
+					}
+					if session.StdinPipe != nil {
+						session.StdinPipe.Close()
+					}
+					log.Printf("cleaned up stale streaming upload session %s (%s)", id, session.FileName)
+				} else {
+					// Remove temp files for encrypted fallback
+					sessionDir := filepath.Join(h.tempDir, id)
+					os.RemoveAll(sessionDir)
+					log.Printf("cleaned up stale encrypted upload session %s (%s)", id, session.FileName)
+				}
 				delete(h.uploads, id)
 			}
 		}
@@ -87,9 +123,33 @@ func (h *ChunkedUploadHandler) cleanupStaleSessions() {
 	}
 }
 
-// InitUpload initiates a new chunked upload session
+// startRcloneRcat launches an rclone rcat process that streams stdin to the remote.
+func (h *ChunkedUploadHandler) startRcloneRcat(remoteName, remotePath string) (*exec.Cmd, io.WriteCloser, *bytes.Buffer, error) {
+	dest := fmt.Sprintf("%s:%s", remoteName, remotePath)
+	cmd := exec.Command(h.rcloneClient.GetRclonePath(), "rcat", dest)
+	if configPath := h.rcloneClient.GetConfigPath(); configPath != "" {
+		cmd.Env = append(os.Environ(), fmt.Sprintf("RCLONE_CONFIG=%s", configPath))
+	}
+
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create stdin pipe: %w", err)
+	}
+
+	stderrBuf := &bytes.Buffer{}
+	cmd.Stderr = stderrBuf
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		return nil, nil, nil, fmt.Errorf("failed to start rclone rcat: %w", err)
+	}
+
+	return cmd, stdin, stderrBuf, nil
+}
+
+// InitUpload initiates a new chunked upload session.
 // POST /api/v1/vfs/upload/init
-// Body: { "account_id": "xxx", "path": "/folder", "filename": "file.zip", "total_size": 1048576, "chunk_size": 5242880, "encryption_passphrase": "optional" }
+// Body: { "account_id": "xxx", "path": "/folder", "filename": "file.zip", "total_size": 1048576, "chunk_size": 1048576, "encryption_passphrase": "optional" }
 func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserID(r)
 	if err != nil {
@@ -102,7 +162,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 		Path                 string `json:"path"`
 		FileName             string `json:"filename"`
 		TotalSize            int64  `json:"total_size"`
-		ChunkSize            int64  `json:"chunk_size"` // default 5MB
+		ChunkSize            int64  `json:"chunk_size"`
 		EncryptionPassphrase string `json:"encryption_passphrase"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -116,7 +176,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	if req.ChunkSize <= 0 {
-		req.ChunkSize = 5 * 1024 * 1024 // 5MB default
+		req.ChunkSize = 1 * 1024 * 1024 // 1MB default
 	}
 
 	accountID, err := uuid.Parse(req.AccountID)
@@ -137,6 +197,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	}
 
 	// If encryption passphrase provided, verify encryption is enabled and passphrase is correct
+	useStreaming := true
 	if req.EncryptionPassphrase != "" {
 		encEnabled, _ := h.userRepo.IsEncryptionEnabled(r.Context(), userID)
 		if !encEnabled {
@@ -154,6 +215,8 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 			apiutil.BadRequest(w, "invalid encryption passphrase")
 			return
 		}
+		// Encrypted uploads use temp-file fallback
+		useStreaming = false
 	}
 
 	totalChunks := int((req.TotalSize + req.ChunkSize - 1) / req.ChunkSize)
@@ -176,15 +239,35 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 		TotalSize:            req.TotalSize,
 		TotalChunks:          totalChunks,
 		ChunkSize:            req.ChunkSize,
-		ReceivedChunks:       make(map[int]bool),
 		EncryptionPassphrase: req.EncryptionPassphrase,
+		UseStreaming:         useStreaming,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
 	}
 
-	// Create temp directory for chunks
-	sessionDir := filepath.Join(h.tempDir, uploadID)
-	os.MkdirAll(sessionDir, 0755)
+	if useStreaming {
+		// Start rclone rcat process for streaming upload
+		cmd, stdinPipe, stderrBuf, err := h.startRcloneRcat(account.RcloneRemoteName, remotePath)
+		if err != nil {
+			apiutil.InternalError(w, "failed to start streaming upload: "+err.Error())
+			return
+		}
+		session.Cmd = cmd
+		session.StdinPipe = stdinPipe
+		session.stderrBuf = stderrBuf
+		session.processDone = make(chan struct{})
+
+		// Monitor rclone process in background
+		go func() {
+			defer close(session.processDone)
+			session.processErr = cmd.Wait()
+		}()
+	} else {
+		// Encrypted fallback: create temp directory for chunks
+		session.ReceivedChunks = make(map[int]bool)
+		sessionDir := filepath.Join(h.tempDir, uploadID)
+		os.MkdirAll(sessionDir, 0755)
+	}
 
 	h.mu.Lock()
 	h.uploads[uploadID] = session
@@ -199,7 +282,7 @@ func (h *ChunkedUploadHandler) InitUpload(w http.ResponseWriter, r *http.Request
 	})
 }
 
-// UploadChunk uploads a single chunk
+// UploadChunk uploads a single chunk.
 // PUT /api/v1/vfs/upload/{upload_id}/chunk/{chunk_number}
 func (h *ChunkedUploadHandler) UploadChunk(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.PathValue("upload_id")
@@ -222,8 +305,65 @@ func (h *ChunkedUploadHandler) UploadChunk(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Save chunk to temp file
-	chunkPath := filepath.Join(h.tempDir, uploadID, fmt.Sprintf("chunk_%06d", chunkNum))
+	if session.UseStreaming {
+		h.uploadChunkStreaming(w, r, session, chunkNum)
+	} else {
+		h.uploadChunkEncrypted(w, r, session, chunkNum)
+	}
+}
+
+// uploadChunkStreaming pipes chunk data directly into the rclone stdin.
+func (h *ChunkedUploadHandler) uploadChunkStreaming(w http.ResponseWriter, r *http.Request, session *UploadSession, chunkNum int) {
+	// Check if rclone process has already failed
+	select {
+	case <-session.processDone:
+		errMsg := "rclone process terminated unexpectedly"
+		if session.processErr != nil {
+			errMsg = fmt.Sprintf("rclone process failed: %v, stderr: %s", session.processErr, session.stderrBuf.String())
+		}
+		apiutil.InternalError(w, errMsg)
+		return
+	default:
+	}
+
+	// Serialise writes to the stdin pipe
+	session.sessionMu.Lock()
+	defer session.sessionMu.Unlock()
+
+	written, err := io.Copy(session.StdinPipe, r.Body)
+	if err != nil {
+		// Check if the process died
+		select {
+		case <-session.processDone:
+			stderrStr := session.stderrBuf.String()
+			apiutil.InternalError(w, fmt.Sprintf("rclone process failed during write: %v, stderr: %s", session.processErr, stderrStr))
+		default:
+			apiutil.InternalError(w, "failed to write chunk to stream: "+err.Error())
+		}
+		return
+	}
+
+	h.mu.Lock()
+	session.ChunksReceived++
+	session.BytesReceived += written
+	session.UpdatedAt = time.Now()
+	received := session.ChunksReceived
+	total := session.TotalChunks
+	h.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"chunk_number":    chunkNum,
+		"chunk_size":      written,
+		"received_chunks": received,
+		"total_chunks":    total,
+		"progress":        float64(received) / float64(total) * 100,
+	})
+}
+
+// uploadChunkEncrypted saves chunk to disk (temp-file fallback for encrypted uploads).
+func (h *ChunkedUploadHandler) uploadChunkEncrypted(w http.ResponseWriter, r *http.Request, session *UploadSession, chunkNum int) {
+	chunkPath := filepath.Join(h.tempDir, session.ID, fmt.Sprintf("chunk_%06d", chunkNum))
 	f, err := os.Create(chunkPath)
 	if err != nil {
 		apiutil.InternalError(w, "failed to create chunk file: "+err.Error())
@@ -254,7 +394,7 @@ func (h *ChunkedUploadHandler) UploadChunk(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// GetUploadStatus returns the status of an upload session
+// GetUploadStatus returns the status of an upload session.
 // GET /api/v1/vfs/upload/{upload_id}/status
 func (h *ChunkedUploadHandler) GetUploadStatus(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.PathValue("upload_id")
@@ -268,40 +408,65 @@ func (h *ChunkedUploadHandler) GetUploadStatus(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	h.mu.RLock()
-	receivedChunks := make([]int, 0, len(session.ReceivedChunks))
-	for k := range session.ReceivedChunks {
-		receivedChunks = append(receivedChunks, k)
-	}
-	h.mu.RUnlock()
+	if session.UseStreaming {
+		h.mu.RLock()
+		received := session.ChunksReceived
+		total := session.TotalChunks
+		h.mu.RUnlock()
 
-	sort.Ints(receivedChunks)
-
-	// Find missing chunks
-	missingChunks := []int{}
-	receivedSet := make(map[int]bool)
-	for _, c := range receivedChunks {
-		receivedSet[c] = true
-	}
-	for i := 0; i < session.TotalChunks; i++ {
-		if !receivedSet[i] {
+		// In streaming mode, chunks arrive sequentially so missing = trailing
+		missingChunks := []int{}
+		for i := received; i < total; i++ {
 			missingChunks = append(missingChunks, i)
 		}
-	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"upload_id":       uploadID,
-		"filename":        session.FileName,
-		"total_chunks":    session.TotalChunks,
-		"received_chunks": len(receivedChunks),
-		"missing_chunks":  missingChunks,
-		"progress":        float64(len(receivedChunks)) / float64(session.TotalChunks) * 100,
-		"complete":        len(receivedChunks) == session.TotalChunks,
-	})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"upload_id":       uploadID,
+			"filename":        session.FileName,
+			"total_chunks":    total,
+			"received_chunks": received,
+			"missing_chunks":  missingChunks,
+			"progress":        float64(received) / float64(total) * 100,
+			"complete":        received == total,
+		})
+	} else {
+		h.mu.RLock()
+		receivedChunks := make([]int, 0, len(session.ReceivedChunks))
+		for k := range session.ReceivedChunks {
+			receivedChunks = append(receivedChunks, k)
+		}
+		h.mu.RUnlock()
+
+		sort.Ints(receivedChunks)
+
+		missingChunks := []int{}
+		receivedSet := make(map[int]bool)
+		for _, c := range receivedChunks {
+			receivedSet[c] = true
+		}
+		for i := 0; i < session.TotalChunks; i++ {
+			if !receivedSet[i] {
+				missingChunks = append(missingChunks, i)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"upload_id":       uploadID,
+			"filename":        session.FileName,
+			"total_chunks":    session.TotalChunks,
+			"received_chunks": len(receivedChunks),
+			"missing_chunks":  missingChunks,
+			"progress":        float64(len(receivedChunks)) / float64(session.TotalChunks) * 100,
+			"complete":        len(receivedChunks) == session.TotalChunks,
+		})
+	}
 }
 
-// FinalizeUpload combines all chunks and uploads to remote storage
+// FinalizeUpload completes the upload.
+// For streaming: closes the stdin pipe and waits for rclone to finish.
+// For encrypted: merges chunks, encrypts, and uploads.
 // POST /api/v1/vfs/upload/{upload_id}/finalize
 func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.PathValue("upload_id")
@@ -315,6 +480,69 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	if session.UseStreaming {
+		h.finalizeStreaming(w, r, session)
+	} else {
+		h.finalizeEncrypted(w, r, session)
+	}
+}
+
+// finalizeStreaming closes the rclone stdin pipe and waits for the upload to complete.
+func (h *ChunkedUploadHandler) finalizeStreaming(w http.ResponseWriter, r *http.Request, session *UploadSession) {
+	// Verify all chunks received
+	h.mu.RLock()
+	received := session.ChunksReceived
+	h.mu.RUnlock()
+
+	if received != session.TotalChunks {
+		apiutil.BadRequest(w, fmt.Sprintf("not all chunks received: %d/%d", received, session.TotalChunks))
+		return
+	}
+
+	// Close stdin pipe to signal EOF to rclone
+	if err := session.StdinPipe.Close(); err != nil {
+		log.Printf("WARNING: error closing stdin pipe: %v", err)
+	}
+
+	// Wait for rclone process to finish (with timeout)
+	select {
+	case <-session.processDone:
+		// Process finished
+	case <-time.After(5 * time.Minute):
+		// Timeout — kill the process
+		if session.Cmd != nil && session.Cmd.Process != nil {
+			session.Cmd.Process.Kill()
+		}
+		apiutil.InternalError(w, "rclone upload timed out")
+		return
+	}
+
+	// Check if rclone exited with error
+	if session.processErr != nil {
+		stderrStr := session.stderrBuf.String()
+		apiutil.InternalError(w, fmt.Sprintf("upload to remote failed: %v, stderr: %s", session.processErr, stderrStr))
+		return
+	}
+
+	// Remove session from map
+	h.mu.Lock()
+	delete(h.uploads, session.ID)
+	h.mu.Unlock()
+
+	// Track file in metadata (best-effort)
+	h.trackFileMetadata(r, session)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"message":     "upload complete",
+		"filename":    session.FileName,
+		"remote_path": session.RemotePath,
+		"size":        session.TotalSize,
+	})
+}
+
+// finalizeEncrypted merges temp chunk files, encrypts, and uploads to remote.
+func (h *ChunkedUploadHandler) finalizeEncrypted(w http.ResponseWriter, r *http.Request, session *UploadSession) {
 	// Check all chunks received
 	if len(session.ReceivedChunks) != session.TotalChunks {
 		apiutil.BadRequest(w, fmt.Sprintf("not all chunks received: %d/%d", len(session.ReceivedChunks), session.TotalChunks))
@@ -322,7 +550,7 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	}
 
 	// Combine chunks into single file
-	combinedPath := filepath.Join(h.tempDir, uploadID, "combined_"+session.FileName)
+	combinedPath := filepath.Join(h.tempDir, session.ID, "combined_"+session.FileName)
 	combined, err := os.Create(combinedPath)
 	if err != nil {
 		apiutil.InternalError(w, "failed to create combined file: "+err.Error())
@@ -330,7 +558,7 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	}
 
 	for i := 0; i < session.TotalChunks; i++ {
-		chunkPath := filepath.Join(h.tempDir, uploadID, fmt.Sprintf("chunk_%06d", i))
+		chunkPath := filepath.Join(h.tempDir, session.ID, fmt.Sprintf("chunk_%06d", i))
 		chunk, err := os.Open(chunkPath)
 		if err != nil {
 			combined.Close()
@@ -342,7 +570,7 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	}
 	combined.Close()
 
-	// Upload combined file to rclone
+	// Open combined file and optionally encrypt
 	combinedFile, err := os.Open(combinedPath)
 	if err != nil {
 		apiutil.InternalError(w, "failed to open combined file: "+err.Error())
@@ -350,45 +578,46 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	}
 	defer combinedFile.Close()
 
-	err = h.rcloneClient.CopyStream(r.Context(), combinedFile, session.RemoteName, session.RemotePath)
+	var uploadReader io.Reader = combinedFile
+
+	if session.EncryptionPassphrase != "" {
+		// Generate salt for file encryption
+		salt, err := appcrypto.GenerateSalt()
+		if err != nil {
+			apiutil.InternalError(w, "failed to generate encryption salt: "+err.Error())
+			return
+		}
+
+		encryptor, err := appcrypto.NewFileEncryptor(session.EncryptionPassphrase, salt)
+		if err != nil {
+			apiutil.InternalError(w, "failed to create encryptor: "+err.Error())
+			return
+		}
+
+		encryptedReader, err := encryptor.EncryptStream(combinedFile)
+		if err != nil {
+			apiutil.InternalError(w, "failed to encrypt file: "+err.Error())
+			return
+		}
+		uploadReader = encryptedReader
+	}
+
+	err = h.rcloneClient.CopyStream(r.Context(), uploadReader, session.RemoteName, session.RemotePath)
 	if err != nil {
 		apiutil.InternalError(w, "upload to remote failed: "+err.Error())
 		return
 	}
 
 	// Cleanup temp files
-	sessionDir := filepath.Join(h.tempDir, uploadID)
+	sessionDir := filepath.Join(h.tempDir, session.ID)
 	os.RemoveAll(sessionDir)
 
 	h.mu.Lock()
-	delete(h.uploads, uploadID)
+	delete(h.uploads, session.ID)
 	h.mu.Unlock()
 
-	// Track file in metadata (best-effort, don't fail the upload)
-	virtualPath := "/" + session.AccountLabel + session.RemotePath
-	fileRecord := &model.File{
-		ID:          uuid.New(),
-		UserID:      session.UserID,
-		Name:        session.FileName,
-		VirtualPath: virtualPath,
-		Size:        session.TotalSize,
-		IsDirectory: false,
-	}
-	if err := h.fileRepo.Upsert(r.Context(), fileRecord); err != nil {
-		log.Printf("WARNING: failed to track file in metadata: %v", err)
-	} else {
-		loc := &model.FileLocation{
-			ID:         uuid.New(),
-			FileID:     fileRecord.ID,
-			AccountID:  session.AccountID,
-			RemotePath: session.RemotePath,
-			ChunkIndex: 0,
-			ChunkSize:  session.TotalSize,
-		}
-		if err := h.fileRepo.AddLocation(r.Context(), loc); err != nil {
-			log.Printf("WARNING: failed to track file location: %v", err)
-		}
-	}
+	// Track file in metadata
+	h.trackFileMetadata(r, session)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -399,13 +628,47 @@ func (h *ChunkedUploadHandler) FinalizeUpload(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// CancelUpload cancels an upload session and cleans up temp files
+// trackFileMetadata saves file record and file location to the database (best-effort).
+func (h *ChunkedUploadHandler) trackFileMetadata(r *http.Request, session *UploadSession) {
+	virtualPath := "/" + session.AccountLabel + session.RemotePath
+	isEncrypted := session.EncryptionPassphrase != ""
+
+	fileRecord := &model.File{
+		ID:          uuid.New(),
+		UserID:      session.UserID,
+		Name:        session.FileName,
+		VirtualPath: virtualPath,
+		Size:        session.TotalSize,
+		IsDirectory: false,
+		IsEncrypted: isEncrypted,
+	}
+	if err := h.fileRepo.Upsert(r.Context(), fileRecord); err != nil {
+		log.Printf("WARNING: failed to track file in metadata: %v", err)
+	} else {
+		loc := &model.FileLocation{
+			ID:          uuid.New(),
+			FileID:      fileRecord.ID,
+			AccountID:   session.AccountID,
+			RemotePath:  session.RemotePath,
+			ChunkIndex:  0,
+			ChunkSize:   session.TotalSize,
+			IsEncrypted: isEncrypted,
+		}
+		if err := h.fileRepo.AddLocation(r.Context(), loc); err != nil {
+			log.Printf("WARNING: failed to track file location: %v", err)
+		}
+	}
+}
+
+// CancelUpload cancels an upload session.
+// For streaming: kills the rclone process.
+// For encrypted: removes temp files.
 // DELETE /api/v1/vfs/upload/{upload_id}
 func (h *ChunkedUploadHandler) CancelUpload(w http.ResponseWriter, r *http.Request) {
 	uploadID := r.PathValue("upload_id")
 
 	h.mu.Lock()
-	_, exists := h.uploads[uploadID]
+	session, exists := h.uploads[uploadID]
 	if exists {
 		delete(h.uploads, uploadID)
 	}
@@ -416,17 +679,27 @@ func (h *ChunkedUploadHandler) CancelUpload(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Cleanup
-	sessionDir := filepath.Join(h.tempDir, uploadID)
-	os.RemoveAll(sessionDir)
+	if session.UseStreaming {
+		// Kill the rclone process
+		if session.StdinPipe != nil {
+			session.StdinPipe.Close()
+		}
+		if session.Cmd != nil && session.Cmd.Process != nil {
+			session.Cmd.Process.Kill()
+		}
+	} else {
+		// Remove temp files
+		sessionDir := filepath.Join(h.tempDir, uploadID)
+		os.RemoveAll(sessionDir)
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "upload cancelled"})
 }
 
-// AutoInitUpload initiates a chunked upload with automatic account selection via scheduler
+// AutoInitUpload initiates a chunked upload with automatic account selection via scheduler.
 // POST /api/v1/vfs/upload/auto-init
-// Body: { "filename": "photo.jpg", "total_size": 5242880, "path": "/Documents/", "chunk_size": 5242880 }
+// Body: { "filename": "photo.jpg", "total_size": 5242880, "path": "/Documents/", "chunk_size": 1048576 }
 func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Request) {
 	userID, err := getUserID(r)
 	if err != nil {
@@ -438,7 +711,7 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 		FileName  string `json:"filename"`
 		TotalSize int64  `json:"total_size"`
 		Path      string `json:"path"`
-		ChunkSize int64  `json:"chunk_size"` // optional, default 5MB
+		ChunkSize int64  `json:"chunk_size"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		apiutil.BadRequest(w, "invalid request body")
@@ -451,7 +724,7 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 	}
 
 	if req.ChunkSize <= 0 {
-		req.ChunkSize = 5 * 1024 * 1024 // 5MB default
+		req.ChunkSize = 1 * 1024 * 1024 // 1MB default
 	}
 
 	// 1. Get user's scheduler_mode from DB
@@ -489,7 +762,7 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// 4. Proceed with normal upload init
+	// 4. Proceed with streaming upload init
 	totalChunks := int((req.TotalSize + req.ChunkSize - 1) / req.ChunkSize)
 	uploadID := uuid.New().String()
 
@@ -500,24 +773,37 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 	remotePath += req.FileName
 
 	session := &UploadSession{
-		ID:             uploadID,
-		UserID:         userID,
-		AccountID:      selected.ID,
-		AccountLabel:   selected.Label,
-		RemoteName:     selected.RcloneRemoteName,
-		FileName:       req.FileName,
-		RemotePath:     remotePath,
-		TotalSize:      req.TotalSize,
-		TotalChunks:    totalChunks,
-		ChunkSize:      req.ChunkSize,
-		ReceivedChunks: make(map[int]bool),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
+		ID:           uploadID,
+		UserID:       userID,
+		AccountID:    selected.ID,
+		AccountLabel: selected.Label,
+		RemoteName:   selected.RcloneRemoteName,
+		FileName:     req.FileName,
+		RemotePath:   remotePath,
+		TotalSize:    req.TotalSize,
+		TotalChunks:  totalChunks,
+		ChunkSize:    req.ChunkSize,
+		UseStreaming: true, // auto-init always uses streaming (no encryption option)
+		CreatedAt:    time.Now(),
+		UpdatedAt:    time.Now(),
 	}
 
-	// Create temp directory for chunks
-	sessionDir := filepath.Join(h.tempDir, uploadID)
-	os.MkdirAll(sessionDir, 0755)
+	// Start rclone rcat process
+	cmd, stdinPipe, stderrBuf, err := h.startRcloneRcat(selected.RcloneRemoteName, remotePath)
+	if err != nil {
+		apiutil.InternalError(w, "failed to start streaming upload: "+err.Error())
+		return
+	}
+	session.Cmd = cmd
+	session.StdinPipe = stdinPipe
+	session.stderrBuf = stderrBuf
+	session.processDone = make(chan struct{})
+
+	// Monitor rclone process in background
+	go func() {
+		defer close(session.processDone)
+		session.processErr = cmd.Wait()
+	}()
 
 	h.mu.Lock()
 	h.uploads[uploadID] = session
@@ -525,11 +811,11 @@ func (h *ChunkedUploadHandler) AutoInitUpload(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"upload_id":      uploadID,
-		"account_id":     selected.ID.String(),
-		"account_label":  selected.Label,
-		"total_chunks":   totalChunks,
-		"chunk_size":     req.ChunkSize,
-		"strategy_used":  string(sched.GetStrategy()),
+		"upload_id":     uploadID,
+		"account_id":    selected.ID.String(),
+		"account_label": selected.Label,
+		"total_chunks":  totalChunks,
+		"chunk_size":    req.ChunkSize,
+		"strategy_used": string(sched.GetStrategy()),
 	})
 }

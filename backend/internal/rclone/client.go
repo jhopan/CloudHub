@@ -33,6 +33,11 @@ func (c *Client) GetConfigPath() string {
 	return c.configPath
 }
 
+// GetRclonePath returns the rclone binary path
+func (c *Client) GetRclonePath() string {
+	return c.rclonePath
+}
+
 // exec runs an rclone command with timeout
 func (c *Client) exec(ctx context.Context, args ...string) ([]byte, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
