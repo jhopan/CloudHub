@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"storage-gateway/internal/api/apiutil"
 	appcrypto "storage-gateway/internal/crypto"
@@ -21,18 +22,20 @@ import (
 // VFSHandler handles global virtual filesystem operations
 // Aggregates files from all storage accounts into a single virtual view
 type VFSHandler struct {
-	accountRepo *repository.StorageAccountRepository
-	rcloneClient *rclone.Client
-	fileRepo    *repository.FileRepository
-	userRepo    *repository.UserRepository
+	accountRepo     *repository.StorageAccountRepository
+	rcloneClient    *rclone.Client
+	fileRepo        *repository.FileRepository
+	userRepo        *repository.UserRepository
+	transferLogRepo *repository.TransferLogRepository
 }
 
-func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, userRepo *repository.UserRepository) *VFSHandler {
+func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, userRepo *repository.UserRepository, transferLogRepo *repository.TransferLogRepository) *VFSHandler {
 	return &VFSHandler{
-		accountRepo: accountRepo,
-		rcloneClient: rcloneClient,
-		fileRepo:    fileRepo,
-		userRepo:    userRepo,
+		accountRepo:     accountRepo,
+		rcloneClient:    rcloneClient,
+		fileRepo:        fileRepo,
+		userRepo:        userRepo,
+		transferLogRepo: transferLogRepo,
 	}
 }
 
@@ -261,9 +264,35 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(vfsFiles)
 }
 
+// logTransfer creates a transfer log entry for a VFS operation (best-effort).
+func (h *VFSHandler) logTransfer(r *http.Request, userID uuid.UUID, accountID uuid.UUID, operation string, status string, bytesTransferred int64, startedAt time.Time, errMsg string) {
+	tl := &model.TransferLog{
+		ID:               uuid.New(),
+		UserID:           userID,
+		AccountID:        &accountID,
+		Operation:        operation,
+		Status:           status,
+		BytesTransferred: bytesTransferred,
+		StartedAt:        &startedAt,
+	}
+	if err := h.transferLogRepo.Create(r.Context(), tl); err != nil {
+		log.Printf("WARNING: failed to create transfer log for %s: %v", operation, err)
+		return
+	}
+	var errPtr *string
+	if errMsg != "" {
+		errPtr = &errMsg
+	}
+	if err := h.transferLogRepo.UpdateStatus(r.Context(), tl.ID, status, bytesTransferred, errPtr); err != nil {
+		log.Printf("WARNING: failed to update transfer log status: %v", err)
+	}
+}
+
 // Download streams a file from the virtual filesystem
 // GET /api/v1/vfs/download?account_id=xxx&path=/file.txt
 func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	userID, err := getUserID(r)
 	if err != nil {
 		apiutil.Unauthorized(w, "authentication required")
@@ -299,6 +328,7 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// Stream file from rclone
 	reader, err := h.rcloneClient.CatStream(r.Context(), account.RcloneRemoteName, filePath)
 	if err != nil {
+		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "download failed: "+err.Error())
 		apiutil.InternalError(w, "download failed: "+err.Error())
 		return
 	}
@@ -345,13 +375,15 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 		// Decrypt stream
 		decReader, err := enc.DecryptStream(reader)
 		if err != nil {
+			h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "decryption failed: "+err.Error())
 			apiutil.InternalError(w, "decryption failed (wrong passphrase?): "+err.Error())
 			return
 		}
 
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		w.Header().Set("Content-Type", "application/octet-stream")
-		io.Copy(w, decReader)
+		written, _ := io.Copy(w, decReader)
+		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "")
 		return
 	}
 
@@ -359,7 +391,8 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 
 	// Support Range requests for resumable download
-	io.Copy(w, reader)
+	written, _ := io.Copy(w, reader)
+	h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "")
 }
 
 // Mkdir creates a folder in the virtual filesystem
@@ -434,6 +467,8 @@ func (h *VFSHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 // Delete removes a file/folder from the virtual filesystem
 // DELETE /api/v1/vfs/delete?account_id=xxx&path=/file.txt
 func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	userID, err := getUserID(r)
 	if err != nil {
 		apiutil.Unauthorized(w, "authentication required")
@@ -466,6 +501,7 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.rcloneClient.Delete(r.Context(), account.RcloneRemoteName, filePath); err != nil {
+		h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusFailed, 0, startTime, "delete failed: "+err.Error())
 		apiutil.InternalError(w, "delete failed: "+err.Error())
 		return
 	}
@@ -480,6 +516,9 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	if delErr := h.fileRepo.DeleteByVirtualPath(r.Context(), userID, virtualPath); delErr != nil {
 		log.Printf("WARNING: failed to delete file metadata: %v", delErr)
 	}
+
+	// Log successful delete transfer
+	h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusCompleted, 0, startTime, "")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})

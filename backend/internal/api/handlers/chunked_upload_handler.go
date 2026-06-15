@@ -30,13 +30,14 @@ import (
 // chunks are piped directly into an rclone rcat process via stdin.
 // Encrypted uploads fall back to a temp-file approach (merge → encrypt → upload).
 type ChunkedUploadHandler struct {
-	accountRepo  *repository.StorageAccountRepository
-	userRepo     *repository.UserRepository
-	rcloneClient *rclone.Client
-	fileRepo     *repository.FileRepository
-	uploads      map[string]*UploadSession
-	mu           sync.RWMutex
-	tempDir      string // only used for encrypted uploads
+	accountRepo     *repository.StorageAccountRepository
+	userRepo        *repository.UserRepository
+	rcloneClient    *rclone.Client
+	fileRepo        *repository.FileRepository
+	transferLogRepo *repository.TransferLogRepository
+	uploads         map[string]*UploadSession
+	mu              sync.RWMutex
+	tempDir         string // only used for encrypted uploads
 }
 
 // UploadSession represents an in-progress chunked upload.
@@ -73,17 +74,18 @@ type UploadSession struct {
 	UpdatedAt time.Time
 }
 
-func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository) *ChunkedUploadHandler {
+func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, transferLogRepo *repository.TransferLogRepository) *ChunkedUploadHandler {
 	tempDir := filepath.Join(os.TempDir(), "storage-gateway-uploads")
 	os.MkdirAll(tempDir, 0755)
 
 	h := &ChunkedUploadHandler{
-		accountRepo:  accountRepo,
-		userRepo:     userRepo,
-		rcloneClient: rcloneClient,
-		fileRepo:     fileRepo,
-		uploads:      make(map[string]*UploadSession),
-		tempDir:      tempDir,
+		accountRepo:     accountRepo,
+		userRepo:        userRepo,
+		rcloneClient:    rcloneClient,
+		fileRepo:        fileRepo,
+		transferLogRepo: transferLogRepo,
+		uploads:         make(map[string]*UploadSession),
+		tempDir:         tempDir,
 	}
 
 	// Cleanup stale sessions every 10 minutes
@@ -535,6 +537,7 @@ func (h *ChunkedUploadHandler) finalizeStreaming(w http.ResponseWriter, r *http.
 		if session.Cmd != nil && session.Cmd.Process != nil {
 			session.Cmd.Process.Kill()
 		}
+		h.logUploadTransfer(r, session, model.StatusFailed, session.BytesReceived, "rclone upload timed out")
 		apiutil.InternalError(w, "rclone upload timed out")
 		return
 	}
@@ -542,6 +545,7 @@ func (h *ChunkedUploadHandler) finalizeStreaming(w http.ResponseWriter, r *http.
 	// Check if rclone exited with error
 	if session.processErr != nil {
 		stderrStr := session.stderrBuf.String()
+		h.logUploadTransfer(r, session, model.StatusFailed, session.BytesReceived, fmt.Sprintf("upload to remote failed: %v, stderr: %s", session.processErr, stderrStr))
 		apiutil.InternalError(w, fmt.Sprintf("upload to remote failed: %v, stderr: %s", session.processErr, stderrStr))
 		return
 	}
@@ -553,6 +557,9 @@ func (h *ChunkedUploadHandler) finalizeStreaming(w http.ResponseWriter, r *http.
 
 	// Track file in metadata (best-effort)
 	h.trackFileMetadata(r, session)
+
+	// Log successful upload transfer
+	h.logUploadTransfer(r, session, model.StatusCompleted, session.TotalSize, "")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -626,6 +633,7 @@ func (h *ChunkedUploadHandler) finalizeEncrypted(w http.ResponseWriter, r *http.
 
 	err = h.rcloneClient.CopyStream(r.Context(), uploadReader, session.RemoteName, session.RemotePath)
 	if err != nil {
+		h.logUploadTransfer(r, session, model.StatusFailed, 0, "upload to remote failed: "+err.Error())
 		apiutil.InternalError(w, "upload to remote failed: "+err.Error())
 		return
 	}
@@ -640,6 +648,9 @@ func (h *ChunkedUploadHandler) finalizeEncrypted(w http.ResponseWriter, r *http.
 
 	// Track file in metadata
 	h.trackFileMetadata(r, session)
+
+	// Log successful upload transfer
+	h.logUploadTransfer(r, session, model.StatusCompleted, session.TotalSize, "")
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
@@ -679,6 +690,31 @@ func (h *ChunkedUploadHandler) trackFileMetadata(r *http.Request, session *Uploa
 		if err := h.fileRepo.AddLocation(r.Context(), loc); err != nil {
 			log.Printf("WARNING: failed to track file location: %v", err)
 		}
+	}
+}
+
+// logUploadTransfer creates a transfer log entry for an upload operation (best-effort).
+func (h *ChunkedUploadHandler) logUploadTransfer(r *http.Request, session *UploadSession, status string, bytesTransferred int64, errMsg string) {
+	startedAt := session.CreatedAt
+	tl := &model.TransferLog{
+		ID:               uuid.New(),
+		UserID:           session.UserID,
+		AccountID:        &session.AccountID,
+		Operation:        model.OpUpload,
+		Status:           status,
+		BytesTransferred: bytesTransferred,
+		StartedAt:        &startedAt,
+	}
+	if err := h.transferLogRepo.Create(r.Context(), tl); err != nil {
+		log.Printf("WARNING: failed to create transfer log for upload: %v", err)
+		return
+	}
+	var errPtr *string
+	if errMsg != "" {
+		errPtr = &errMsg
+	}
+	if err := h.transferLogRepo.UpdateStatus(r.Context(), tl.ID, status, bytesTransferred, errPtr); err != nil {
+		log.Printf("WARNING: failed to update transfer log status: %v", err)
 	}
 }
 
