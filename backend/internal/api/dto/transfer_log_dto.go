@@ -8,6 +8,7 @@ type TransferLogResponse struct {
 	Operation        string  `json:"operation"`
 	Status           string  `json:"status"`
 	BytesTransferred int64   `json:"bytes_transferred"`
+	FileName         string  `json:"file_name"`
 	ErrorMessage     *string `json:"error_message,omitempty"`
 	RetryCount       int     `json:"retry_count"`
 	MaxRetries       int     `json:"max_retries"`

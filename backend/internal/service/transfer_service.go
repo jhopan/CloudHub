@@ -87,6 +87,7 @@ func (s *TransferService) toResponse(log *model.TransferLog) *dto.TransferLogRes
 		Operation:        log.Operation,
 		Status:           log.Status,
 		BytesTransferred: log.BytesTransferred,
+		FileName:         log.FileName,
 		ErrorMessage:     log.ErrorMessage,
 		RetryCount:       log.RetryCount,
 		MaxRetries:       log.MaxRetries,

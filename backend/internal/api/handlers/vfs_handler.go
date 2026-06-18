@@ -387,8 +387,18 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 	// Extract filename from path for logging
 	fileName := path.Base(filePath)
 
+	// Strip account label prefix from VFS path to get actual remote path
+	// VFS path: "/Google Drive Account/fntest.txt" -> rclone path: "/fntest.txt"
+	remotePath := filePath
+	accountPrefix := "/" + account.Label
+	if strings.HasPrefix(remotePath, accountPrefix+"/") {
+		remotePath = remotePath[len(accountPrefix):]
+	} else if remotePath == accountPrefix {
+		remotePath = "/"
+	}
+
 	// Stream file from rclone
-	reader, err := h.rcloneClient.CatStream(r.Context(), account.RcloneRemoteName, filePath)
+	reader, err := h.rcloneClient.CatStream(r.Context(), account.RcloneRemoteName, remotePath)
 	if err != nil {
 		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "download failed: "+err.Error(), fileName)
 		apiutil.InternalError(w, "download failed: "+err.Error())
@@ -568,7 +578,16 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	// Extract filename from path for logging
 	fileName := path.Base(filePath)
 
-	if err := h.rcloneClient.Delete(r.Context(), account.RcloneRemoteName, filePath); err != nil {
+	// Strip account label prefix from VFS path to get actual remote path
+	remotePath := filePath
+	accountPrefix := "/" + account.Label
+	if strings.HasPrefix(remotePath, accountPrefix+"/") {
+		remotePath = remotePath[len(accountPrefix):]
+	} else if remotePath == accountPrefix {
+		remotePath = "/"
+	}
+
+	if err := h.rcloneClient.Delete(r.Context(), account.RcloneRemoteName, remotePath); err != nil {
 		h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusFailed, 0, startTime, "delete failed: "+err.Error(), fileName)
 		apiutil.InternalError(w, "delete failed: "+err.Error())
 		return
