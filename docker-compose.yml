@@ -21,8 +21,7 @@ services:
       POSTGRES_PASSWORD: storage_gw_secret_2024
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
+    # PostgreSQL uses internal Docker network only — not exposed to host
     deploy:
       resources:
         limits:
@@ -55,8 +54,7 @@ services:
       --save ""
       --appendonly no
       --tcp-backlog 128
-    ports:
-      - "6379:6379"
+    # Redis uses internal Docker network only — not exposed to host
     deploy:
       resources:
         limits:
@@ -75,7 +73,7 @@ services:
     container_name: sg-backend
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8888}:8080"
     environment:
       # Server
       PORT: "8080"
@@ -118,9 +116,9 @@ services:
     container_name: sg-frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "${FRONTEND_PORT:-3333}:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080/api/v1
+      NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_PORT:-8888}/api/v1
     depends_on:
       - backend
     deploy:

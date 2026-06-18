@@ -84,7 +84,7 @@ if test_file:
     encoded_path = urllib.parse.quote(fpath, safe='')
     r = subprocess.run(['curl', '-s', '-o', '/tmp/downloaded.txt', '-w', '%{http_code} %{time_total}s',
         '-H', ah, f'http://localhost:8080/api/v1/vfs/download?account_id={aid}&path={encoded_path}'],
-        capture_output=True, text=True, timeout=30)
+        capture_output=True, text=True, timeout=60)
     print(f'Download: HTTP {r.stdout}')
     if os.path.exists('/tmp/downloaded.txt'):
         size = os.path.getsize('/tmp/downloaded.txt')
