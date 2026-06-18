@@ -23,19 +23,17 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    // Check if user is logged in on mount
-    const storedUser = localStorage.getItem('user');
-    const accessToken = localStorage.getItem('accessToken');
-
-    if (storedUser && accessToken) {
-      setUser(JSON.parse(storedUser));
+  const [user, setUser] = useState<User | null>(() => {
+    if (typeof window !== 'undefined') {
+      const storedUser = localStorage.getItem('user');
+      const accessToken = localStorage.getItem('accessToken');
+      if (storedUser && accessToken) {
+        try { return JSON.parse(storedUser); } catch { return null; }
+      }
     }
-    setLoading(false);
-  }, []);
+    return null;
+  });
+  const [loading, setLoading] = useState(false);
 
   const login = async (email: string, password: string) => {
     const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';

@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { apiClient } from '@/lib/api-client';
+import { useEscapeKey } from '@/lib/use-escape-key';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -45,6 +46,7 @@ import {
   Link2,
   Copy,
   Check,
+  WifiOff,
 } from 'lucide-react';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -279,6 +281,7 @@ export default function MyFilesPage() {
   const [files, setFiles] = useState<VFSFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isConnectionError, setIsConnectionError] = useState(false);
 
   // Accounts & pool
   const [accounts, setAccounts] = useState<StorageAccount[]>([]);
@@ -316,6 +319,10 @@ export default function MyFilesPage() {
   const [shareResult, setShareResult] = useState<{ url: string; token: string } | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
   const [shareError, setShareError] = useState<string | null>(null);
+
+  // Escape key closes modals
+  useEscapeKey(() => setShareModalOpen(false), shareModalOpen);
+  useEscapeKey(() => setDeleteConfirmFile(null), !!deleteConfirmFile);
 
   // Abort controllers for cancellation
   const abortControllerRef = useRef<Map<string, AbortController>>(new Map());
@@ -378,13 +385,28 @@ export default function MyFilesPage() {
   const fetchFiles = useCallback(async (path: string) => {
     setLoading(true);
     setError(null);
+    setIsConnectionError(false);
+
+    const FETCH_TIMEOUT = 15_000; // 15 seconds
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('__FETCH_TIMEOUT__')), FETCH_TIMEOUT)
+    );
+
     try {
-      const res = await apiClient.get('/vfs/list', { params: { path } });
+      const res = await Promise.race([
+        apiClient.get('/vfs/list', { params: { path } }),
+        timeoutPromise,
+      ]);
       setFiles(Array.isArray(res.data) ? res.data : res.data.files || []);
     } catch (e: unknown) {
-      const err = e as { response?: { data?: { message?: string } }; message?: string };
-      const msg = err.response?.data?.message || err.message || 'Failed to load files';
-      setError(msg);
+      const err = e as { message?: string; response?: { data?: { message?: string } } };
+      if (err.message === '__FETCH_TIMEOUT__') {
+        setIsConnectionError(true);
+        setError('Unable to load files. The storage provider may be unreachable.');
+      } else {
+        const msg = err.response?.data?.message || err.message || 'Failed to load files';
+        setError(msg);
+      }
       setFiles([]);
     } finally {
       setLoading(false);
@@ -588,6 +610,28 @@ export default function MyFilesPage() {
   // ─── Chunked Upload ──────────────────────────────────────────────────────
 
   const uploadFileChunked = async (file: File) => {
+    // ── Validate file before starting upload ──
+    if (!file || !file.name) {
+      console.error('[Upload] Invalid file object:', file);
+      setUploadSuccess('Cannot upload: invalid file. Please try again.');
+      setTimeout(() => setUploadSuccess(null), 5000);
+      return;
+    }
+
+    if (!file.size || file.size <= 0) {
+      console.warn('[Upload] Skipping empty file:', file.name, 'size:', file.size);
+      setUploadSuccess(`Cannot upload "${file.name}": file is empty (0 bytes).`);
+      setTimeout(() => setUploadSuccess(null), 5000);
+      return;
+    }
+
+    console.log('[Upload] Starting upload:', {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: file.lastModified,
+    });
+
     const useAutoPick = isAtRoot && !selectedAccountId;
 
     if (!useAutoPick && !currentAccountId) {
@@ -638,6 +682,7 @@ export default function MyFilesPage() {
         const initRes = await apiClient.post('/vfs/upload/auto-init', {
           filename: file.name,
           total_size: totalSize,
+          chunk_size: CHUNK_SIZE,
           path: remotePath === '/' ? '/' : remotePath,
         });
 
@@ -708,6 +753,18 @@ export default function MyFilesPage() {
             await apiClient.put(`/vfs/upload/${upload_id}/chunk/${i}`, chunk, {
               headers: { 'Content-Type': 'application/octet-stream' },
               signal: controller.signal,
+              onUploadProgress: (progressEvent) => {
+                if (progressEvent.loaded && progressEvent.total) {
+                  const chunkBytes = progressEvent.loaded;
+                  const totalUploaded = uploadedBytes + chunkBytes;
+                  const elapsed = (Date.now() - startedAt) / 1000;
+                  const speed = elapsed > 0 ? totalUploaded / elapsed : 0;
+                  updateUpload({
+                    uploaded_bytes: totalUploaded,
+                    speed,
+                  });
+                }
+              },
             });
             chunkUploaded = true;
           } catch (chunkErr: unknown) {
@@ -784,14 +841,43 @@ export default function MyFilesPage() {
         if (!finalized) {
           finalized = true;
           updateUpload({ status: 'finalizing' });
-          await apiClient.post(`/vfs/upload/${upload_id}/finalize`);
+          
+          // Finalize with timeout — rclone merge can take a while for large files
+          const finalizeTimeout = Math.max(30000, totalSize / (1024 * 1024) * 2000); // min 30s, +2s per MB
+          try {
+            await Promise.race([
+              apiClient.post(`/vfs/upload/${upload_id}/finalize`),
+              new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('finalize_timeout')), finalizeTimeout)
+              ),
+            ]);
+          } catch (timeoutErr: unknown) {
+            const tErr = timeoutErr as Error;
+            if (tErr.message === 'finalize_timeout') {
+              // Poll status — finalize might still be processing server-side
+              updateUpload({ error: 'Server is processing... please wait' });
+              for (let poll = 0; poll < 10; poll++) {
+                await new Promise((r) => setTimeout(r, 3000));
+                try {
+                  const statusRes = await apiClient.get(`/vfs/upload/${upload_id}/status`);
+                  if (statusRes.data.status === 'completed' || statusRes.data.status === 'finalized') {
+                    break;
+                  }
+                } catch {
+                  break; // Upload session might be cleaned up
+                }
+              }
+            } else {
+              throw timeoutErr;
+            }
+          }
         }
-        updateUpload({ status: 'complete', uploaded_bytes: totalSize });
+        updateUpload({ status: 'complete', uploaded_bytes: totalSize, error: undefined });
       } catch (finalizeErr: unknown) {
         // If 404 or already_finalized, the upload was already completed — treat as success
         const fErr = finalizeErr as { response?: { status?: number; data?: { already_finalized?: boolean } } };
         if (fErr?.response?.status === 404 || fErr?.response?.data?.already_finalized) {
-          updateUpload({ status: 'complete', uploaded_bytes: totalSize });
+          updateUpload({ status: 'complete', uploaded_bytes: totalSize, error: undefined });
         } else {
           throw finalizeErr;
         }
@@ -819,11 +905,25 @@ export default function MyFilesPage() {
         setUploads((prev) => prev.filter((u) => u.upload_id !== upload_id));
       }, 10000);
     } catch (e: unknown) {
-      const err = e as { message?: string };
-      console.error('Upload failed:', e);
+      const err = e as {
+        message?: string;
+        response?: { status?: number; data?: { error?: string; message?: string } };
+      };
+      // Extract the actual server error message from the Axios response
+      const serverMsg =
+        err.response?.data?.message ||
+        err.response?.data?.error ||
+        err.message ||
+        'Upload failed';
+      console.error('[Upload] Failed:', {
+        file: file.name,
+        status: err.response?.status,
+        serverMessage: serverMsg,
+        original: e,
+      });
       updateUpload({
         status: 'error',
-        error: err.message || 'Upload failed',
+        error: serverMsg,
       });
       abortControllerRef.current.delete(uploadKey);
     }
@@ -831,8 +931,31 @@ export default function MyFilesPage() {
 
   const handleFileSelect = (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+
+    // Snapshot files into an array (FileList can become invalid after event returns in some browsers)
+    const files: File[] = [];
     for (let i = 0; i < fileList.length; i++) {
-      uploadFileChunked(fileList[i]);
+      const f = fileList[i];
+      if (f && f.name && f.size > 0) {
+        files.push(f);
+      } else {
+        console.warn('[Upload] Skipping invalid file:', f?.name, 'size:', f?.size);
+      }
+    }
+
+    // Reset file input so the same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+
+    if (files.length === 0) {
+      setUploadSuccess('No valid files selected for upload.');
+      setTimeout(() => setUploadSuccess(null), 5000);
+      return;
+    }
+
+    for (const file of files) {
+      uploadFileChunked(file);
     }
   };
 
@@ -1279,8 +1402,32 @@ export default function MyFilesPage() {
                   </div>
                 )}
 
-                {/* Error state */}
-                {error && !loading && (
+                {/* Connection Error state (timeout / unreachable provider) */}
+                {error && !loading && isConnectionError && (
+                  <div className="flex flex-col items-center justify-center py-20 px-4">
+                    <Card className="max-w-sm w-full border-red-200/60 bg-red-50/40 shadow-sm">
+                      <CardContent className="flex flex-col items-center py-10 px-6">
+                        <div className="p-3 rounded-2xl bg-red-100 mb-4">
+                          <WifiOff className="h-8 w-8 text-red-500" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-slate-900 mb-1">Connection Error</h3>
+                        <p className="text-sm text-slate-500 text-center max-w-xs mb-5">{error}</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => fetchFiles(currentPath)}
+                          className="border-red-200 hover:bg-red-50"
+                        >
+                          <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                          Retry
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </div>
+                )}
+
+                {/* Generic API Error state */}
+                {error && !loading && !isConnectionError && (
                   <div className="flex flex-col items-center justify-center py-20 px-4">
                     <div className="p-3 rounded-2xl bg-red-50 mb-4">
                       <AlertCircle className="h-8 w-8 text-red-400" />
@@ -1701,30 +1848,37 @@ export default function MyFilesPage() {
                           </div>
 
                           {/* Progress bar */}
-                          <div className="w-full bg-slate-100 rounded-full h-1.5 overflow-hidden">
+                          <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden relative">
                             <div
-                              className={`h-full transition-all duration-300 rounded-full ${
+                              className={`h-full rounded-full relative overflow-hidden ${
                                 upload.status === 'complete'
-                                  ? 'bg-emerald-500'
+                                  ? 'bg-emerald-500 transition-all duration-500'
                                   : upload.status === 'error'
                                   ? 'bg-red-500'
                                   : upload.status === 'restarting'
                                   ? 'bg-amber-400 animate-pulse'
                                   : upload.status === 'finalizing'
-                                  ? 'bg-violet-400 animate-pulse'
+                                  ? 'bg-gradient-to-r from-violet-500 to-blue-500 animate-pulse'
                                   : upload.status === 'paused'
                                   ? 'bg-slate-400'
-                                  : 'bg-gradient-to-r from-violet-500 to-blue-500'
+                                  : 'bg-gradient-to-r from-violet-500 to-blue-500 transition-all duration-200 ease-out'
                               }`}
-                              style={{ width: `${percent}%` }}
-                            />
+                              style={{ width: `${Math.max(percent, 2)}%` }}
+                            >
+                              {upload.status === 'uploading' && (
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-[shimmer_1.5s_infinite]" />
+                              )}
+                              {upload.status === 'finalizing' && (
+                                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/40 to-transparent animate-[shimmer_1s_infinite]" />
+                              )}
+                            </div>
                           </div>
 
                           {/* Details */}
                           <div className="flex justify-between mt-1.5">
                             <span className="text-[10px] text-slate-400">
                               {upload.status === 'finalizing'
-                                ? 'Finalizing...'
+                                ? '✨ Finalizing upload...'
                                 : upload.status === 'complete'
                                 ? 'Complete'
                                 : upload.status === 'error'
@@ -1735,10 +1889,16 @@ export default function MyFilesPage() {
                             </span>
                             <div className="flex items-center gap-2">
                               <span className="text-[10px] text-slate-400">
-                                {formatBytes(upload.uploaded_bytes)} / {formatBytes(upload.total_size)}
+                                {upload.status === 'finalizing'
+                                  ? formatBytes(upload.total_size)
+                                  : `${formatBytes(upload.uploaded_bytes)} / ${formatBytes(upload.total_size)}`}
                               </span>
-                              <span className="text-[10px] font-medium text-slate-500">
-                                {percent}%
+                              <span className={`text-[10px] font-medium ${
+                                upload.status === 'complete' ? 'text-emerald-600' :
+                                upload.status === 'finalizing' ? 'text-violet-600 animate-pulse' :
+                                'text-slate-500'
+                              }`}>
+                                {upload.status === 'finalizing' ? '⏳' : `${percent}%`}
                               </span>
                             </div>
                           </div>

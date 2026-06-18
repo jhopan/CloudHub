@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { apiClient } from '@/lib/api-client';
+import { useEscapeKey } from '@/lib/use-escape-key';
 import {
   Plus, HardDrive, CheckCircle, XCircle, Loader2, Trash2,
   ChevronRight, ChevronLeft, Zap, Clock, Check, X,
@@ -183,6 +184,9 @@ export default function ProviderDetailPage() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Escape key closes modals
+  useEscapeKey(() => setShowMkdirDialog(false), showMkdirDialog);
 
   // ─── Fetch Data ──────────────────────────────────────────────────────────
 
@@ -1025,20 +1029,6 @@ export default function ProviderDetailPage() {
           </div>
         )}
 
-        {/* Empty State */}
-        {accounts.length === 0 && (
-          <div className="text-center py-16">
-            <HardDrive className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No accounts connected</h3>
-            <p className="text-sm text-gray-500 mt-1">Connect your first {provider.display_name} account to get started</p>
-            <button
-              onClick={() => router.push('/providers')}
-              className="mt-4 px-6 py-3 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700"
-            >
-              + Add Account
-            </button>
-          </div>
-        )}
       </div>
 
       {/* Create Folder Dialog */}

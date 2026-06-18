@@ -1,9 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useAuth } from '@/lib/auth-context';
@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import PasswordStrength from '@/components/PasswordStrength';
 
 const registerSchema = z.object({
   displayName: z.string().min(2, 'Display name must be at least 2 characters'),
@@ -26,17 +27,27 @@ type RegisterForm = z.infer<typeof registerSchema>;
 
 export default function RegisterPage() {
   const router = useRouter();
-  const { register: registerUser } = useAuth();
+  const { register: registerUser, user } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // Redirect if already logged in
+  useEffect(() => {
+    if (user) {
+      router.push('/dashboard');
+    }
+  }, [user, router]);
 
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors },
   } = useForm<RegisterForm>({
     resolver: zodResolver(registerSchema),
   });
+
+  const watchedPassword = useWatch({ control, name: 'password', defaultValue: '' });
 
   const onSubmit = async (data: RegisterForm) => {
     setError(null);
@@ -107,6 +118,7 @@ export default function RegisterPage() {
               {errors.password && (
                 <p className="text-sm text-red-600">{errors.password.message}</p>
               )}
+              <PasswordStrength password={watchedPassword} />
             </div>
 
             <div className="space-y-2">

@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { X, Loader2, Copy, Check, AlertCircle } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { useEscapeKey } from '@/lib/use-escape-key';
+import { useToast } from '@/lib/toast-context';
 
 interface Provider {
   id: string;
@@ -19,6 +21,10 @@ interface AddAccountModalProps {
 }
 
 export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModalProps) {
+  const handleEscape = useCallback(() => onClose(), [onClose]);
+  useEscapeKey(handleEscape);
+  const { success: toastSuccess } = useToast();
+
   const [step, setStep] = useState<'form' | 'oauth-wait' | 'success' | 'error'>('form');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +136,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
         // Backend returns: { done: bool, success: bool, error?: string }
         if (res.data.done && res.data.success) {
           setStep('success');
+          toastSuccess(`${provider.display_name} account connected successfully!`);
           setTimeout(() => {
             onSuccess();
             onClose();
@@ -183,6 +190,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       });
       
       setStep('success');
+      toastSuccess(`${provider.display_name} account connected successfully!`);
       setTimeout(() => {
         onSuccess();
         onClose();
@@ -207,6 +215,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       });
       
       setStep('success');
+      toastSuccess(`${provider.display_name} account connected successfully!`);
       setTimeout(() => {
         onSuccess();
         onClose();

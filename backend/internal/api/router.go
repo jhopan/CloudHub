@@ -77,8 +77,8 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	usageHandler := handlers.NewUsageHandler(usageService)
 	oauthHandler := handlers.NewOAuthHandler(rcloneOAuthService)
 	accountFileHandler := handlers.NewAccountFileHandler(accountRepo, rcloneClient)
-	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo, userRepo, transferLogRepo)
-	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, userRepo, rcloneClient, fileRepo, transferLogRepo)
+	vfsHandler := handlers.NewVFSHandler(accountRepo, rcloneClient, fileRepo, userRepo, transferLogRepo, redis)
+	chunkedUploadHandler := handlers.NewChunkedUploadHandler(accountRepo, userRepo, rcloneClient, fileRepo, transferLogRepo, redis)
 	settingsHandler := handlers.NewSettingsHandler(userRepo)
 	adminHandler := handlers.NewAdminHandler(userRepo, accountRepo, providerRepo, transferLogRepo, fileRepo, db)
 	sharedLinkRepo := repository.NewSharedLinkRepository(db)
@@ -92,10 +92,13 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
-		// Auth routes (public)
-		r.Post("/auth/register", authHandler.Register)
-		r.Post("/auth/login", authHandler.Login)
-		r.Post("/auth/refresh", authHandler.RefreshToken)
+		// Auth routes (public, rate-limited)
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimitPublic(redis))
+			r.Post("/auth/register", authHandler.Register)
+			r.Post("/auth/login", authHandler.Login)
+			r.Post("/auth/refresh", authHandler.RefreshToken)
+		})
 
 		// Protected routes
 		r.Group(func(r chi.Router) {

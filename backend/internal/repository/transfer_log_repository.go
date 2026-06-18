@@ -21,13 +21,13 @@ func NewTransferLogRepository(db *pgxpool.Pool) *TransferLogRepository {
 
 func (r *TransferLogRepository) Create(ctx context.Context, log *model.TransferLog) error {
 	query := `
-		INSERT INTO transfer_logs (id, file_id, user_id, account_id, operation, status, bytes_transferred, retry_count, max_retries, started_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO transfer_logs (id, file_id, user_id, account_id, operation, status, bytes_transferred, file_name, retry_count, max_retries, started_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING created_at
 	`
 	return r.db.QueryRow(ctx, query,
 		log.ID, log.FileID, log.UserID, log.AccountID, log.Operation, log.Status,
-		log.BytesTransferred, log.RetryCount, log.MaxRetries, log.StartedAt,
+		log.BytesTransferred, log.FileName, log.RetryCount, log.MaxRetries, log.StartedAt,
 	).Scan(&log.CreatedAt)
 }
 
@@ -55,7 +55,7 @@ func (r *TransferLogRepository) IncrementRetry(ctx context.Context, id uuid.UUID
 func (r *TransferLogRepository) GetByUserID(ctx context.Context, userID uuid.UUID, limit, offset int) ([]*model.TransferLog, error) {
 	query := `
 		SELECT id, file_id, user_id, account_id, operation, status, bytes_transferred,
-		       error_message, retry_count, max_retries, started_at, completed_at, created_at
+		       error_message, file_name, retry_count, max_retries, started_at, completed_at, created_at
 		FROM transfer_logs
 		WHERE user_id = $1
 		ORDER BY created_at DESC
@@ -72,7 +72,7 @@ func (r *TransferLogRepository) GetByUserID(ctx context.Context, userID uuid.UUI
 		log := &model.TransferLog{}
 		if err := rows.Scan(&log.ID, &log.FileID, &log.UserID, &log.AccountID,
 			&log.Operation, &log.Status, &log.BytesTransferred, &log.ErrorMessage,
-			&log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
+			&log.FileName, &log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
 			return nil, err
 		}
 		logs = append(logs, log)
@@ -83,7 +83,7 @@ func (r *TransferLogRepository) GetByUserID(ctx context.Context, userID uuid.UUI
 func (r *TransferLogRepository) GetFailedWithRetries(ctx context.Context) ([]*model.TransferLog, error) {
 	query := `
 		SELECT id, file_id, user_id, account_id, operation, status, bytes_transferred,
-		       error_message, retry_count, max_retries, started_at, completed_at, created_at
+		       error_message, file_name, retry_count, max_retries, started_at, completed_at, created_at
 		FROM transfer_logs
 		WHERE status = $1 AND retry_count < max_retries
 		ORDER BY created_at ASC
@@ -100,7 +100,7 @@ func (r *TransferLogRepository) GetFailedWithRetries(ctx context.Context) ([]*mo
 		log := &model.TransferLog{}
 		if err := rows.Scan(&log.ID, &log.FileID, &log.UserID, &log.AccountID,
 			&log.Operation, &log.Status, &log.BytesTransferred, &log.ErrorMessage,
-			&log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
+			&log.FileName, &log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
 			return nil, err
 		}
 		logs = append(logs, log)
@@ -126,7 +126,7 @@ func (r *TransferLogRepository) GetAllPaginated(ctx context.Context, page, perPa
 	offset := (page - 1) * perPage
 	query := `
 		SELECT id, file_id, user_id, account_id, operation, status, bytes_transferred,
-		       error_message, retry_count, max_retries, started_at, completed_at, created_at
+		       error_message, file_name, retry_count, max_retries, started_at, completed_at, created_at
 		FROM transfer_logs
 		ORDER BY created_at DESC
 		LIMIT $1 OFFSET $2
@@ -142,7 +142,7 @@ func (r *TransferLogRepository) GetAllPaginated(ctx context.Context, page, perPa
 		log := &model.TransferLog{}
 		if err := rows.Scan(&log.ID, &log.FileID, &log.UserID, &log.AccountID,
 			&log.Operation, &log.Status, &log.BytesTransferred, &log.ErrorMessage,
-			&log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
+			&log.FileName, &log.RetryCount, &log.MaxRetries, &log.StartedAt, &log.CompletedAt, &log.CreatedAt); err != nil {
 			return nil, 0, err
 		}
 		logs = append(logs, log)

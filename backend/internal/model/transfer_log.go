@@ -16,6 +16,7 @@ type TransferLog struct {
 	Status         string     `db:"status" json:"status"`
 	BytesTransferred int64    `db:"bytes_transferred" json:"bytes_transferred"`
 	ErrorMessage   *string    `db:"error_message" json:"error_message"`
+	FileName       string     `db:"file_name" json:"file_name"`
 	RetryCount     int        `db:"retry_count" json:"retry_count"`
 	MaxRetries     int        `db:"max_retries" json:"max_retries"`
 	StartedAt      *time.Time `db:"started_at" json:"started_at"`

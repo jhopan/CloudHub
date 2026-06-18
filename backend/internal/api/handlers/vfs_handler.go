@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"storage-gateway/internal/repository"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // VFSHandler handles global virtual filesystem operations
@@ -27,15 +30,17 @@ type VFSHandler struct {
 	fileRepo        *repository.FileRepository
 	userRepo        *repository.UserRepository
 	transferLogRepo *repository.TransferLogRepository
+	redis           *redis.Client
 }
 
-func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, userRepo *repository.UserRepository, transferLogRepo *repository.TransferLogRepository) *VFSHandler {
+func NewVFSHandler(accountRepo *repository.StorageAccountRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, userRepo *repository.UserRepository, transferLogRepo *repository.TransferLogRepository, redis *redis.Client) *VFSHandler {
 	return &VFSHandler{
 		accountRepo:     accountRepo,
 		rcloneClient:    rcloneClient,
 		fileRepo:        fileRepo,
 		userRepo:        userRepo,
 		transferLogRepo: transferLogRepo,
+		redis:           redis,
 	}
 }
 
@@ -54,6 +59,25 @@ type VFSFile struct {
 	RemotePath    string `json:"remote_path"` // actual path on the remote
 }
 
+// vfsCacheKey builds the Redis cache key for a VFS list response.
+func vfsCacheKey(userID uuid.UUID, path string) string {
+	return fmt.Sprintf("vfs:list:%s:%s", userID.String(), path)
+}
+
+// invalidateVFSCache removes the cached VFS listing for a given user and path.
+// It also invalidates the root "/" listing since subfolder changes affect it.
+func (h *VFSHandler) invalidateVFSCache(ctx context.Context, userID uuid.UUID, vfsPath string) {
+	if h.redis == nil {
+		return
+	}
+	// Always invalidate the specific path
+	h.redis.Del(ctx, vfsCacheKey(userID, vfsPath))
+	// Also invalidate root if the changed path is not already root
+	if vfsPath != "/" {
+		h.redis.Del(ctx, vfsCacheKey(userID, "/"))
+	}
+}
+
 // List lists files in the virtual filesystem
 // GET /api/v1/vfs/list?path=/
 // Path structure:
@@ -70,6 +94,18 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 	vfsPath := r.URL.Query().Get("path")
 	if vfsPath == "" {
 		vfsPath = "/"
+	}
+
+	// --- Redis cache: check for HIT ---
+	if h.redis != nil {
+		cacheKey := vfsCacheKey(userID, vfsPath)
+		cached, err := h.redis.Get(r.Context(), cacheKey).Result()
+		if err == nil && cached != "" {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-Cache", "HIT")
+			w.Write([]byte(cached))
+			return
+		}
 	}
 
 	// Get all active accounts for this user
@@ -174,8 +210,19 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 			allFiles = []VFSFile{}
 		}
 
+		// Marshal once, cache in Redis, then write response
+		jsonData, err := json.Marshal(allFiles)
+		if err != nil {
+			apiutil.InternalError(w, "failed to marshal response")
+			return
+		}
+		if h.redis != nil {
+			cacheKey := vfsCacheKey(userID, vfsPath)
+			h.redis.Set(r.Context(), cacheKey, string(jsonData), 60*time.Second)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(allFiles)
+		w.Header().Set("X-Cache", "MISS")
+		w.Write(jsonData)
 		return
 	}
 
@@ -260,12 +307,23 @@ func (h *VFSHandler) List(w http.ResponseWriter, r *http.Request) {
 		vfsFiles = []VFSFile{}
 	}
 
+	// Marshal once, cache in Redis, then write response
+	jsonData, err := json.Marshal(vfsFiles)
+	if err != nil {
+		apiutil.InternalError(w, "failed to marshal response")
+		return
+	}
+	if h.redis != nil {
+		cacheKey := vfsCacheKey(userID, vfsPath)
+		h.redis.Set(r.Context(), cacheKey, string(jsonData), 60*time.Second)
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(vfsFiles)
+	w.Header().Set("X-Cache", "MISS")
+	w.Write(jsonData)
 }
 
 // logTransfer creates a transfer log entry for a VFS operation (best-effort).
-func (h *VFSHandler) logTransfer(r *http.Request, userID uuid.UUID, accountID uuid.UUID, operation string, status string, bytesTransferred int64, startedAt time.Time, errMsg string) {
+func (h *VFSHandler) logTransfer(r *http.Request, userID uuid.UUID, accountID uuid.UUID, operation string, status string, bytesTransferred int64, startedAt time.Time, errMsg string, fileName string) {
 	tl := &model.TransferLog{
 		ID:               uuid.New(),
 		UserID:           userID,
@@ -273,6 +331,7 @@ func (h *VFSHandler) logTransfer(r *http.Request, userID uuid.UUID, accountID uu
 		Operation:        operation,
 		Status:           status,
 		BytesTransferred: bytesTransferred,
+		FileName:         fileName,
 		StartedAt:        &startedAt,
 	}
 	if err := h.transferLogRepo.Create(r.Context(), tl); err != nil {
@@ -325,10 +384,13 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract filename from path for logging
+	fileName := path.Base(filePath)
+
 	// Stream file from rclone
 	reader, err := h.rcloneClient.CatStream(r.Context(), account.RcloneRemoteName, filePath)
 	if err != nil {
-		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "download failed: "+err.Error())
+		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "download failed: "+err.Error(), fileName)
 		apiutil.InternalError(w, "download failed: "+err.Error())
 		return
 	}
@@ -375,7 +437,7 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 		// Decrypt stream
 		decReader, err := enc.DecryptStream(reader)
 		if err != nil {
-			h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "decryption failed: "+err.Error())
+			h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusFailed, 0, startTime, "decryption failed: "+err.Error(), fileName)
 			apiutil.InternalError(w, "decryption failed (wrong passphrase?): "+err.Error())
 			return
 		}
@@ -383,7 +445,7 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 		w.Header().Set("Content-Type", "application/octet-stream")
 		written, _ := io.Copy(w, decReader)
-		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "")
+		h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "", fileName)
 		return
 	}
 
@@ -392,7 +454,7 @@ func (h *VFSHandler) Download(w http.ResponseWriter, r *http.Request) {
 
 	// Support Range requests for resumable download
 	written, _ := io.Copy(w, reader)
-	h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "")
+	h.logTransfer(r, userID, accountID, model.OpDownload, model.StatusCompleted, written, startTime, "", fileName)
 }
 
 // Mkdir creates a folder in the virtual filesystem
@@ -436,11 +498,14 @@ func (h *VFSHandler) Mkdir(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Track directory in metadata (best-effort)
+	// Invalidate VFS list cache for the affected path and root
 	virtualPath := "/" + account.Label + req.Path
 	if !strings.HasSuffix(virtualPath, "/") {
 		virtualPath += "/"
 	}
+	h.invalidateVFSCache(r.Context(), userID, virtualPath)
+
+	// Track directory in metadata (best-effort)
 	dirName := req.Path
 	if idx := strings.LastIndex(strings.TrimSuffix(req.Path, "/"), "/"); idx >= 0 {
 		dirName = req.Path[idx+1:]
@@ -500,14 +565,20 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Extract filename from path for logging
+	fileName := path.Base(filePath)
+
 	if err := h.rcloneClient.Delete(r.Context(), account.RcloneRemoteName, filePath); err != nil {
-		h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusFailed, 0, startTime, "delete failed: "+err.Error())
+		h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusFailed, 0, startTime, "delete failed: "+err.Error(), fileName)
 		apiutil.InternalError(w, "delete failed: "+err.Error())
 		return
 	}
 
-	// Clean up metadata (best-effort)
+	// Invalidate VFS list cache for the affected path and root
 	virtualPath := "/" + account.Label + filePath
+	h.invalidateVFSCache(r.Context(), userID, virtualPath)
+
+	// Clean up metadata (best-effort)
 	if file, err := h.fileRepo.GetByVirtualPath(r.Context(), userID, virtualPath); err == nil {
 		if locErr := h.fileRepo.DeleteLocations(r.Context(), file.ID); locErr != nil {
 			log.Printf("WARNING: failed to delete file locations: %v", locErr)
@@ -518,7 +589,7 @@ func (h *VFSHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Log successful delete transfer
-	h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusCompleted, 0, startTime, "")
+	h.logTransfer(r, userID, accountID, model.OpDelete, model.StatusCompleted, 0, startTime, "", fileName)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"message": "deleted"})
@@ -661,6 +732,9 @@ func (h *VFSHandler) Sync(w http.ResponseWriter, r *http.Request) {
 			totalSynced++
 		}
 	}
+
+	// Invalidate VFS list cache — sync changes all cached listings
+	h.invalidateVFSCache(r.Context(), userID, "/")
 
 	response := map[string]interface{}{
 		"message":      "sync complete",

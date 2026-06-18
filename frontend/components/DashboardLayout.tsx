@@ -130,15 +130,17 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
                 <p className="text-xs text-muted-foreground capitalize">{user.role}</p>
               </div>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full"
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4 mr-2" />
-              Logout
-            </Button>
+            <div className="space-y-1">
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={handleLogout}
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Logout
+              </Button>
+            </div>
           </div>
         </div>
       </aside>

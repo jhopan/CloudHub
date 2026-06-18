@@ -81,9 +81,16 @@ func (rl *RateLimiter) Handler(next http.Handler) http.Handler {
 }
 
 // RateLimitPerUser creates a rate limiter middleware with default settings
-// 100 requests per minute per user
+// 200 requests per minute per user (authenticated)
 func RateLimitPerUser(redisClient *redis.Client) func(http.Handler) http.Handler {
-	limiter := NewRateLimiter(redisClient, 100, 1*time.Minute)
+	limiter := NewRateLimiter(redisClient, 200, 1*time.Minute)
+	return limiter.Handler
+}
+
+// RateLimitPublic creates a rate limiter for unauthenticated/public endpoints
+// 60 requests per minute per IP
+func RateLimitPublic(redisClient *redis.Client) func(http.Handler) http.Handler {
+	limiter := NewRateLimiter(redisClient, 60, 1*time.Minute)
 	return limiter.Handler
 }
 

@@ -23,6 +23,7 @@ import (
 	"storage-gateway/internal/scheduler"
 
 	"github.com/google/uuid"
+	"github.com/redis/go-redis/v9"
 )
 
 // ChunkedUploadHandler handles resumable chunked file uploads.
@@ -35,6 +36,7 @@ type ChunkedUploadHandler struct {
 	rcloneClient    *rclone.Client
 	fileRepo        *repository.FileRepository
 	transferLogRepo *repository.TransferLogRepository
+	redis           *redis.Client
 	uploads         map[string]*UploadSession
 	mu              sync.RWMutex
 	tempDir         string // only used for encrypted uploads
@@ -74,7 +76,7 @@ type UploadSession struct {
 	UpdatedAt time.Time
 }
 
-func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, transferLogRepo *repository.TransferLogRepository) *ChunkedUploadHandler {
+func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, userRepo *repository.UserRepository, rcloneClient *rclone.Client, fileRepo *repository.FileRepository, transferLogRepo *repository.TransferLogRepository, redisClient *redis.Client) *ChunkedUploadHandler {
 	tempDir := filepath.Join(os.TempDir(), "storage-gateway-uploads")
 	os.MkdirAll(tempDir, 0755)
 
@@ -84,6 +86,7 @@ func NewChunkedUploadHandler(accountRepo *repository.StorageAccountRepository, u
 		rcloneClient:    rcloneClient,
 		fileRepo:        fileRepo,
 		transferLogRepo: transferLogRepo,
+		redis:           redisClient,
 		uploads:         make(map[string]*UploadSession),
 		tempDir:         tempDir,
 	}
@@ -558,6 +561,13 @@ func (h *ChunkedUploadHandler) finalizeStreaming(w http.ResponseWriter, r *http.
 	// Track file in metadata (best-effort)
 	h.trackFileMetadata(r, session)
 
+	// Invalidate VFS list cache — new file appeared
+	if h.redis != nil {
+		vfsPath := "/" + session.AccountLabel + "/"
+		h.redis.Del(r.Context(), vfsCacheKey(session.UserID, vfsPath))
+		h.redis.Del(r.Context(), vfsCacheKey(session.UserID, "/"))
+	}
+
 	// Log successful upload transfer
 	h.logUploadTransfer(r, session, model.StatusCompleted, session.TotalSize, "")
 
@@ -649,6 +659,13 @@ func (h *ChunkedUploadHandler) finalizeEncrypted(w http.ResponseWriter, r *http.
 	// Track file in metadata
 	h.trackFileMetadata(r, session)
 
+	// Invalidate VFS list cache — new file appeared
+	if h.redis != nil {
+		vfsPath := "/" + session.AccountLabel + "/"
+		h.redis.Del(r.Context(), vfsCacheKey(session.UserID, vfsPath))
+		h.redis.Del(r.Context(), vfsCacheKey(session.UserID, "/"))
+	}
+
 	// Log successful upload transfer
 	h.logUploadTransfer(r, session, model.StatusCompleted, session.TotalSize, "")
 
@@ -695,6 +712,7 @@ func (h *ChunkedUploadHandler) trackFileMetadata(r *http.Request, session *Uploa
 
 // logUploadTransfer creates a transfer log entry for an upload operation (best-effort).
 func (h *ChunkedUploadHandler) logUploadTransfer(r *http.Request, session *UploadSession, status string, bytesTransferred int64, errMsg string) {
+	log.Printf("DEBUG: logUploadTransfer called - status=%s bytes=%d file=%s", status, bytesTransferred, session.FileName)
 	startedAt := session.CreatedAt
 	tl := &model.TransferLog{
 		ID:               uuid.New(),
@@ -703,6 +721,7 @@ func (h *ChunkedUploadHandler) logUploadTransfer(r *http.Request, session *Uploa
 		Operation:        model.OpUpload,
 		Status:           status,
 		BytesTransferred: bytesTransferred,
+		FileName:         session.FileName,
 		StartedAt:        &startedAt,
 	}
 	if err := h.transferLogRepo.Create(r.Context(), tl); err != nil {

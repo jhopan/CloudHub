@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { useToast } from '@/lib/toast-context';
 import { apiClient } from '@/lib/api-client';
 import DashboardLayout from '@/components/DashboardLayout';
 import { Button } from '@/components/ui/button';
@@ -123,6 +124,7 @@ const STRATEGIES: Strategy[] = [
 export default function SettingsPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const [settings, setSettings] = useState<SettingsData | null>(null);
   const [selectedStrategy, setSelectedStrategy] = useState<string>('largest_free');
@@ -179,6 +181,8 @@ export default function SettingsPage() {
     try {
       await apiClient.put('/settings', { scheduler_mode: selectedStrategy });
       setSaveSuccess(true);
+      const strategyName = STRATEGIES.find((s) => s.id === selectedStrategy)?.name || selectedStrategy;
+      toastSuccess(`Scheduler strategy changed to "${strategyName}"`);
       setTimeout(() => setSaveSuccess(false), 3000);
     } catch (e: unknown) {
       const err = e as { response?: { data?: { message?: string } }; message?: string };
