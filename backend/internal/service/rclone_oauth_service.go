@@ -300,6 +300,7 @@ func (s *RcloneOAuthService) finalizeAuth(ctx context.Context, session *authSess
 		UserID:           session.userID,
 		ProviderID:       provider.ID,
 		Label:            session.label,
+		EngineType:       "rclone",
 		RcloneRemoteName: remoteName,
 		Credentials:      credentialsJSON,
 		HealthStatus:     "healthy",

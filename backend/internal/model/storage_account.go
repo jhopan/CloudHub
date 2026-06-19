@@ -17,6 +17,7 @@ type StorageAccount struct {
 	ProviderID       uuid.UUID  `db:"provider_id" json:"provider_id"`
 	Label            string     `db:"label" json:"label"`
 	Credentials      []byte     `db:"credentials" json:"-"`
+	EngineType       string     `db:"engine_type" json:"engine_type"`
 	RcloneRemoteName string     `db:"rclone_remote_name" json:"rclone_remote_name"`
 	CapacityBytes    int64      `db:"capacity_bytes" json:"capacity_bytes"`
 	UsedBytes        int64      `db:"used_bytes" json:"used_bytes"`

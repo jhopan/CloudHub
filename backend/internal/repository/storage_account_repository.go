@@ -21,8 +21,8 @@ func NewStorageAccountRepository(db *pgxpool.Pool) *StorageAccountRepository {
 
 func (r *StorageAccountRepository) Create(ctx context.Context, account *model.StorageAccount) error {
 	query := `
-		INSERT INTO storage_accounts (user_id, provider_id, label, credentials, rclone_remote_name, capacity_bytes, used_bytes, health_status, cost_per_gb_month, is_active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+		INSERT INTO storage_accounts (user_id, provider_id, label, credentials, engine_type, rclone_remote_name, capacity_bytes, used_bytes, health_status, cost_per_gb_month, is_active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		RETURNING id, created_at, updated_at
 	`
 
@@ -31,6 +31,7 @@ func (r *StorageAccountRepository) Create(ctx context.Context, account *model.St
 		account.ProviderID,
 		account.Label,
 		account.Credentials,
+		account.EngineType,
 		account.RcloneRemoteName,
 		account.CapacityBytes,
 		account.UsedBytes,
@@ -50,7 +51,7 @@ func (r *StorageAccountRepository) GetByID(ctx context.Context, id uuid.UUID) (*
 	account := &model.StorageAccount{}
 
 	query := `
-		SELECT id, user_id, provider_id, label, credentials, rclone_remote_name,
+		SELECT id, user_id, provider_id, label, credentials, engine_type, rclone_remote_name,
 		       capacity_bytes, used_bytes, health_status, last_health_check, last_capacity_sync,
 		       cost_per_gb_month, is_active, created_at, updated_at
 		FROM storage_accounts
@@ -63,6 +64,7 @@ func (r *StorageAccountRepository) GetByID(ctx context.Context, id uuid.UUID) (*
 		&account.ProviderID,
 		&account.Label,
 		&account.Credentials,
+		&account.EngineType,
 		&account.RcloneRemoteName,
 		&account.CapacityBytes,
 		&account.UsedBytes,
@@ -85,7 +87,7 @@ func (r *StorageAccountRepository) GetByID(ctx context.Context, id uuid.UUID) (*
 func (r *StorageAccountRepository) GetByUserID(ctx context.Context, userID uuid.UUID) ([]*model.StorageAccountWithProvider, error) {
 	query := `
 		SELECT 
-			sa.id, sa.user_id, sa.provider_id, sa.label, sa.credentials, sa.rclone_remote_name,
+			sa.id, sa.user_id, sa.provider_id, sa.label, sa.credentials, sa.engine_type, sa.rclone_remote_name,
 			sa.capacity_bytes, sa.used_bytes, sa.health_status,
 			sa.last_health_check, sa.last_capacity_sync, sa.cost_per_gb_month, sa.is_active,
 			sa.created_at, sa.updated_at,
@@ -106,7 +108,7 @@ func (r *StorageAccountRepository) GetByUserID(ctx context.Context, userID uuid.
 	for rows.Next() {
 		acc := &model.StorageAccountWithProvider{}
 		err := rows.Scan(
-			&acc.ID, &acc.UserID, &acc.ProviderID, &acc.Label, &acc.Credentials, &acc.RcloneRemoteName,
+			&acc.ID, &acc.UserID, &acc.ProviderID, &acc.Label, &acc.Credentials, &acc.EngineType, &acc.RcloneRemoteName,
 			&acc.CapacityBytes, &acc.UsedBytes, &acc.HealthStatus,
 			&acc.LastHealthCheck, &acc.LastCapacitySync, &acc.CostPerGBMonth, &acc.IsActive,
 			&acc.CreatedAt, &acc.UpdatedAt,
@@ -227,7 +229,7 @@ func (r *StorageAccountRepository) GetTotalCapacity(ctx context.Context, userID 
 // GetAll returns all storage accounts
 func (r *StorageAccountRepository) GetAll(ctx context.Context) ([]*model.StorageAccount, error) {
 	query := `
-		SELECT id, user_id, provider_id, label, rclone_remote_name, capacity_bytes, used_bytes,
+		SELECT id, user_id, provider_id, label, engine_type, rclone_remote_name, capacity_bytes, used_bytes,
 		       health_status, last_health_check, last_capacity_sync, cost_per_gb_month,
 		       is_active, created_at, updated_at
 		FROM storage_accounts
@@ -256,7 +258,7 @@ func (r *StorageAccountRepository) GetAll(ctx context.Context) ([]*model.Storage
 func (r *StorageAccountRepository) GetAllWithOwnerAndProvider(ctx context.Context) ([]*AdminStorageAccount, error) {
 	query := `
 		SELECT 
-			sa.id, sa.user_id, sa.provider_id, sa.label, sa.rclone_remote_name,
+			sa.id, sa.user_id, sa.provider_id, sa.label, sa.engine_type, sa.rclone_remote_name,
 			sa.capacity_bytes, sa.used_bytes, sa.health_status, sa.is_active,
 			sa.created_at, sa.updated_at,
 			p.display_name as provider_display_name, p.type as provider_type,
@@ -275,7 +277,7 @@ func (r *StorageAccountRepository) GetAllWithOwnerAndProvider(ctx context.Contex
 	var accounts []*AdminStorageAccount
 	for rows.Next() {
 		var acc AdminStorageAccount
-		if err := rows.Scan(&acc.ID, &acc.UserID, &acc.ProviderID, &acc.Label, &acc.RcloneRemoteName,
+		if err := rows.Scan(&acc.ID, &acc.UserID, &acc.ProviderID, &acc.Label, &acc.EngineType, &acc.RcloneRemoteName,
 			&acc.CapacityBytes, &acc.UsedBytes, &acc.HealthStatus, &acc.IsActive,
 			&acc.CreatedAt, &acc.UpdatedAt,
 			&acc.ProviderDisplayName, &acc.ProviderType, &acc.OwnerEmail); err != nil {
@@ -310,6 +312,7 @@ type AdminStorageAccount struct {
 	UserID              uuid.UUID `json:"user_id"`
 	ProviderID          uuid.UUID `json:"provider_id"`
 	Label               string    `json:"label"`
+	EngineType          string    `json:"engine_type"`
 	RcloneRemoteName    string    `json:"rclone_remote_name"`
 	CapacityBytes       int64     `json:"capacity_bytes"`
 	UsedBytes           int64     `json:"used_bytes"`
