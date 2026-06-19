@@ -47,6 +47,7 @@ type StorageAccountResponse struct {
 	ProviderType     string  `json:"provider_type"`
 	ProviderIconURL  string  `json:"provider_icon_url"`
 	Label            string  `json:"label"`
+	EngineType       string  `json:"engine_type"`
 	RcloneRemoteName string  `json:"rclone_remote_name"`
 	CapacityBytes    int64   `json:"capacity_bytes"`
 	UsedBytes        int64   `json:"used_bytes"`
