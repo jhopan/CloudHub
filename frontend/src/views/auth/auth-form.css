@@ -1,0 +1,159 @@
+.auth-form {
+	display: flex;
+	flex-direction: column;
+	gap: 1.1rem;
+}
+
+.auth-field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.4rem;
+}
+
+.auth-field__label {
+	font-size: 0.82rem;
+	font-weight: 600;
+	color: #475569;
+}
+
+.auth-field__control {
+	position: relative;
+	display: flex;
+	align-items: center;
+}
+
+.auth-field__icon {
+	position: absolute;
+	left: 0.85rem;
+	color: #94a3b8;
+	pointer-events: none;
+}
+
+.auth-field__control input {
+	width: 100%;
+	padding: 0.72rem 0.9rem 0.72rem 2.5rem;
+	border: 1px solid #d8dee9;
+	border-radius: 0.7rem;
+	font-size: 0.95rem;
+	background: #fff;
+	color: #0f172a;
+	transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-field__control input:focus {
+	outline: none;
+	border-color: #2563eb;
+	box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
+}
+
+.auth-error {
+	margin: -0.2rem 0 0;
+	padding: 0.55rem 0.75rem;
+	border-radius: 0.55rem;
+	background: rgba(220, 38, 38, 0.08);
+	color: #dc2626;
+	font-size: 0.84rem;
+}
+
+.auth-submit {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.5rem;
+	margin-top: 0.25rem;
+	padding: 0.8rem 1rem;
+	border: none;
+	border-radius: 0.7rem;
+	background: linear-gradient(140deg, #2563eb, #4f46e5);
+	color: #fff;
+	font-size: 0.95rem;
+	font-weight: 600;
+	cursor: pointer;
+	box-shadow: 0 12px 24px rgba(37, 99, 235, 0.25);
+	transition: transform 0.12s ease, box-shadow 0.12s ease, opacity 0.12s ease;
+}
+
+.auth-submit:hover:not(:disabled) {
+	transform: translateY(-1px);
+	box-shadow: 0 16px 30px rgba(37, 99, 235, 0.32);
+}
+
+.auth-submit:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+	box-shadow: none;
+}
+
+.auth-hint {
+	margin: -0.35rem 0 0;
+	font-size: 0.78rem;
+	color: #94a3b8;
+}
+
+.auth-switch {
+	margin: 1.5rem 0 0;
+	text-align: center;
+	font-size: 0.88rem;
+	color: #64748b;
+}
+
+.auth-switch button {
+	border: none;
+	background: none;
+	color: #2563eb;
+	font-weight: 600;
+	cursor: pointer;
+	padding: 0 0.25rem;
+}
+
+.auth-switch button:hover {
+	text-decoration: underline;
+}
+
+.spin {
+	animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.auth-fade-enter-active,
+.auth-fade-leave-active {
+	transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.auth-fade-enter-from,
+.auth-fade-leave-to {
+	opacity: 0;
+	transform: translateY(-4px);
+}
+
+.dark .auth-field__label {
+	color: #cbd5e1;
+}
+
+.dark .auth-field__control input {
+	background: #111a2e;
+	border-color: #2b3a55;
+	color: #e2e8f0;
+}
+
+.dark .auth-field__control input:focus {
+	border-color: #3b82f6;
+	box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.25);
+}
+
+.dark .auth-hint {
+	color: #64748b;
+}
+
+.dark .auth-switch {
+	color: #94a3b8;
+}
+
+.dark .auth-switch button {
+	color: #93c5fd;
+}

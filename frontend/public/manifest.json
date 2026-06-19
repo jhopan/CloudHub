@@ -1,7 +1,0 @@
-{
-  "name": "CloudHub Storage Gateway",
-  "short_name": "CloudHub",
-  "description": "Self-hosted cloud storage gateway",
-  "start_url": "/",
-  "display": "standalone"
-}
