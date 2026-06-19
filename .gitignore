@@ -1,81 +1,9 @@
-# Dependencies
 node_modules/
-vendor/
-go.sum
-
-# Build outputs
-build/
-dist/
-*.exe
-*.dll
-*.so
-*.dylib
-*.test
-*.out
-
-# Environment & secrets
-.env
-.env.local
-.env.*.local
-*.pem
-*.key
-secrets/
-
-# IDE & editors
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-Thumbs.db
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Coverage
-coverage/
-*.lcov
-.nyc_output/
-
-# Testing
-.npm/
-.eslintcache
-
-# Docker
-docker-compose.override.yml
-
-# Database
 *.db
-*.sqlite
-*.sqlite3
-
-# rclone config (contains credentials)
-rclone.conf
-*.rclone.conf
-
-# Temp files
-tmp/
-temp/
-uploads/
-*.tmp
-
-# Next.js
+*.db-shm
+*.db-wal
+.env
+cloudhub-rclone.conf
+dist/
+.vite/
 .next/
-out/
-
-# Go
-*.prof
-cpu.prof
-mem.prof

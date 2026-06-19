@@ -1,127 +1,135 @@
-# CloudHub - Storage Gateway
+# ☁️ CloudHub — Cloud Storage Gateway
 
-A self-hosted cloud storage gateway platform that aggregates multiple cloud storage providers into a single virtual storage pool.
+Self-hosted cloud storage gateway that aggregates multiple cloud storage providers into a single virtual storage pool.
 
-## 🎯 Overview
+## Features
 
-CloudHub allows users to connect multiple cloud storage accounts (Google Drive, Mega, OneDrive, Dropbox, Cloudflare R2, S3, Backblaze B2, WebDAV, etc.) and manage them as one unified storage pool. The system intelligently manages file placement using a pluggable scheduler while keeping the physical storage location transparent to users.
+### Core
+- **135+ Cloud Providers** — 7 Direct API + 128 via rclone
+- **OAuth 1-Click Login** — Google Drive, OneDrive, Dropbox, Yandex
+- **WebSocket Upload Progress** — Real-time upload tracking
+- **Video Streaming** — Range request support for direct playback
+- **File Manager** — Browse, upload, download, rename, delete
+- **Smart Scheduler** — round_robin, least_used, most_free, weighted, manual
 
-## 🏗️ Architecture
+### Providers
+| Type | Providers |
+|------|-----------|
+| **Direct API** | Google Drive, OneDrive, Dropbox, MEGA, S3, pCloud, Yandex |
+| **rclone** | WebDAV, Nextcloud, FTP, SFTP, Backblaze B2, Proton Drive, + 120 more |
 
+### Advanced
+- **Shared Links** — Generate temporary links with optional password + expiry
+- **Transfer Logs** — Track all file operations with stats dashboard
+- **Health Checks** — Auto-check accounts every 30 minutes
+- **Encrypted Credentials** — AES-256 encryption for stored tokens
+
+## Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| Backend | Node.js + Express |
+| Frontend | Vue.js 3 + Vite + TailwindCSS |
+| Database | SQLite |
+| Storage Engine | Direct API + rclone CLI |
+
+## Requirements
+
+- Node.js 18+
+- rclone (installed on system)
+- ~100 MB RAM
+
+## Quick Start
+
+### Backend
+```bash
+cd backend
+cp .env.example .env
+# Edit .env with your OAuth credentials
+npm install
+npm run dev
+# → http://localhost:8787
 ```
-┌─────────────────┐
-│   Next.js UI    │
-│   (Frontend)    │
-└────────┬────────┘
-         │ REST API
-┌────────▼────────┐
-│   Go Backend    │
-│   (API Server)  │
-└────────┬────────┘
-         │
-    ┌────┴─────┬──────────┐
-    │          │          │
-┌───▼──┐  ┌───▼───┐  ┌───▼────┐
-│PostgreSQL│ Redis  │  │ rclone │
-│ (DB)   │ (Cache) │  │(Engine)│
-└────────┘  └───────┘  └───┬────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-         ┌────▼────┐  ┌───▼────┐  ┌───▼────┐
-         │ GDrive  │  │ Mega   │  │ OneDrive│
-         └─────────┘  └────────┘  └────────┘
-              ... more providers ...
+
+### Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+# → http://localhost:5173
 ```
 
-## 📁 Project Structure
+## Environment Variables
 
+```env
+# Backend (.env)
+PORT=8787
+APP_MODE=hosted
+CORS_ORIGIN=http://localhost:5173
+FRONTEND_URL=http://localhost:5173
+
+# Security
+CLOUDHUB_SECRET_HALF=*** secret
+
+# OAuth (configure per provider)
+GOOGLE_CLIENT_ID=***
+GOOGLE_CLIENT_SECRET=***
+ONEDRIVE_CLIENT_ID=***
+ONEDRIVE_CLIENT_SECRET=***
+DROPBOX_CLIENT_ID=***
+DROPBOX_CLIENT_SECRET=***
 ```
-storage-gateway/
-├── frontend/          # Next.js + TypeScript + TailwindCSS + shadcn/ui
-├── backend/           # Go API server
-├── infra/             # Infrastructure configs
-│   ├── docker/        # Dockerfiles
-│   ├── nginx/         # Nginx configuration
-│   └── scripts/       # Deployment scripts
-├── docs/              # Documentation
-│   ├── plan.md        # Project roadmap
-│   ├── ssd.md         # System Design Document
-│   └── tdd.md         # Technical Design Document
-└── README.md          # This file
-```
 
-## 🛠️ Tech Stack
-
-- **Frontend**: Next.js 14, TypeScript, TailwindCSS, shadcn/ui
-- **Backend**: Go 1.22+, Chi Router, PostgreSQL, Redis
-- **Storage Engine**: rclone 1.65+
-- **Containerization**: Docker, Docker Compose
-- **Deployment**: Linux VPS
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Docker & Docker Compose
-- Node.js 20+ (for frontend development)
-- Go 1.22+ (for backend development)
-- rclone 1.65+
-
-### Quick Start
+## VPS Deploy
 
 ```bash
-# Clone the repository
-git clone <repository-url>
-cd storage-gateway
+# Backend: just run node
+cd backend && npm install && node src/server.js
 
-# Copy environment file
-cp .env.example .env
-
-# Start services with Docker Compose
-docker-compose up -d
-
-# Access the application
-# Frontend: http://localhost:3000
-# Backend:  http://localhost:8080
+# Frontend: build static
+cd frontend && npm install && npm run build
+# Serve dist/ with nginx/caddy
 ```
 
-## 📊 Features
+**Minimum VPS: 512 MB RAM**
 
-### Current Features (MVP)
-- ✅ Multi-provider support (Google Drive, Mega, OneDrive, Dropbox, R2, S3, B2, WebDAV)
-- ✅ Unified storage pool with aggregated capacity
-- ✅ Intelligent file placement scheduler
-- ✅ Encrypted credential storage (AES-256-GCM)
-- ✅ Virtual filesystem abstraction
-- ✅ Transfer logs and monitoring
-- ✅ Background workers for health checks and capacity refresh
+## Architecture
 
-### Planned Features
-- 🔄 File chunking across providers
-- 🔄 Multi-copy replication
-- 🔄 Client-side encryption
-- 🔄 Deduplication
-- 🔄 Shared links with expiration
-- 🔄 Admin panel
+```
+┌──────────┐    ┌──────────┐    ┌──────────────────┐
+│  Vue.js  │───→│ Express  │───→│  Adapter Router  │
+│ Frontend │    │ Backend  │    │                  │
+└──────────┘    └──────────┘    │  ┌─ Direct API ─┐│
+                    │           │  │ GDrive       ││
+                ┌───┴───┐      │  │ OneDrive     ││
+                │SQLite │      │  │ Dropbox      ││
+                └───────┘      │  │ MEGA/S3/...  ││
+                               │  └──────────────┘│
+                               │  ┌─ rclone ─────┐│
+                               │  │ WebDAV       ││
+                               │  │ Nextcloud    ││
+                               │  │ FTP/SFTP     ││
+                               │  │ B2/Proton    ││
+                               │  │ + 120 more   ││
+                               │  └──────────────┘│
+                               └──────────────────┘
+```
 
-## 🔐 Security
+## API Endpoints
 
-- Passwords hashed with bcrypt
-- JWT authentication with refresh tokens
-- AES-256-GCM encryption for provider credentials
-- Rate limiting per user
-- CORS protection
-- HSTS headers
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/auth/register` | Register |
+| POST | `/api/auth/login` | Login |
+| GET | `/api/accounts` | List storage accounts |
+| GET | `/api/files` | File browser |
+| POST | `/api/upload` | Upload file |
+| GET | `/api/files/:id/download` | Download file |
+| POST | `/api/shared-links` | Create shared link |
+| GET | `/api/public/:token` | Public download |
+| GET | `/api/transfers` | Transfer logs |
+| GET | `/api/health/accounts` | Health status |
 
-## 📝 License
+## License
 
-MIT License - see LICENSE file for details
-
-## 👥 Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
-
-## 📧 Support
-
-For support, please open an issue on GitHub or contact the maintainers.
+MIT (forked from [OmniCloud](https://github.com/omnicloud/omnicloud))
