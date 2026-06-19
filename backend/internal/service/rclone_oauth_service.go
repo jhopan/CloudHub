@@ -349,8 +349,10 @@ func (s *RcloneOAuthService) SubmitCallbackURL(ctx context.Context, sessionID, c
 	}
 
 	// Exchange code for token
+	log.Printf("[oauth] exchanging code for token, session=%s, code_len=%d", resolvedSessionID, len(code))
 	tokenJSON, err := s.exchangeCodeForToken(ctx, code, session.backend)
 	if err != nil {
+		log.Printf("[oauth] token exchange FAILED for session %s: %v", resolvedSessionID, err)
 		return &AuthStatusResult{
 			Done:    true,
 			Success: false,
@@ -358,18 +360,23 @@ func (s *RcloneOAuthService) SubmitCallbackURL(ctx context.Context, sessionID, c
 		}, nil
 	}
 
+	log.Printf("[oauth] token obtained for session %s, token_len=%d", resolvedSessionID, len(tokenJSON))
 	session.token = tokenJSON
 	session.done = true
 
 	// Finalize – create remote and account
+	log.Printf("[oauth] calling finalizeAuth for session %s", resolvedSessionID)
 	remoteName, err := s.finalizeAuth(ctx, session)
 	if err != nil {
+		log.Printf("[oauth] finalizeAuth FAILED for session %s: %v", resolvedSessionID, err)
 		return &AuthStatusResult{
 			Done:    true,
 			Success: false,
 			Error:   err.Error(),
 		}, nil
 	}
+
+	log.Printf("[oauth] account created successfully: %s (remote: %s)", session.label, remoteName)
 
 	// Cleanup
 	s.mu.Lock()

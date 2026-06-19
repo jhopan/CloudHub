@@ -187,10 +187,17 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
     
     setLoading(true);
     try {
-      await apiClient.post('/oauth/callback', {
+      const res = await apiClient.post('/oauth/callback', {
         session_id: oauthSession,
         callback_url: callbackUrl,
       });
+      
+      // Check response body for actual success/failure
+      if (res.data && res.data.done && !res.data.success) {
+        setError(res.data.error || 'OAuth authorization failed');
+        setStep('error');
+        return;
+      }
       
       setStep('success');
       toastSuccess(`${provider.display_name} account connected successfully!`);
@@ -200,6 +207,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       }, 1500);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Invalid callback URL');
+      setStep('error');
     } finally {
       setLoading(false);
     }
