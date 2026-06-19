@@ -11,6 +11,15 @@ type UpdateStorageAccountRequest struct {
 	Credentials map[string]string `json:"credentials" validate:"omitempty"`
 }
 
+type RenameStorageAccountRequest struct {
+	Label string `json:"label" validate:"required,min=1,max=100"`
+}
+
+type AccountCountResponse struct {
+	Count      int    `json:"count"`
+	NextLabel  string `json:"next_label"`
+}
+
 type ProviderResponse struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`

@@ -182,6 +182,31 @@ func (r *StorageAccountRepository) Delete(ctx context.Context, id uuid.UUID) err
 	return nil
 }
 
+// UpdateLabel updates only the label (display name) of a storage account
+func (r *StorageAccountRepository) UpdateLabel(ctx context.Context, id uuid.UUID, label string) error {
+	query := `UPDATE storage_accounts SET label = $1, updated_at = NOW() WHERE id = $2`
+	_, err := r.db.Exec(ctx, query, label, id)
+	if err != nil {
+		return fmt.Errorf("failed to update account label: %w", err)
+	}
+	return nil
+}
+
+// CountByUserAndProvider returns the number of accounts a user has for a given provider type
+func (r *StorageAccountRepository) CountByUserAndProvider(ctx context.Context, userID uuid.UUID, providerType string) (int, error) {
+	query := `
+		SELECT COUNT(*) FROM storage_accounts sa
+		JOIN providers p ON p.id = sa.provider_id
+		WHERE sa.user_id = $1 AND p.type = $2
+	`
+	var count int
+	err := r.db.QueryRow(ctx, query, userID, providerType).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("failed to count accounts by provider: %w", err)
+	}
+	return count, nil
+}
+
 func (r *StorageAccountRepository) GetTotalCapacity(ctx context.Context, userID uuid.UUID) (totalCapacity, totalUsed int64, err error) {
 	query := `
 		SELECT 

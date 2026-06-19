@@ -16,11 +16,12 @@ interface Provider {
 
 interface AddAccountModalProps {
   provider: Provider;
+  accountCount?: number;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (newAccountLabel?: string) => void;
 }
 
-export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModalProps) {
+export function AddAccountModal({ provider, accountCount = 0, onClose, onSuccess }: AddAccountModalProps) {
   const handleEscape = useCallback(() => onClose(), [onClose]);
   useEscapeKey(handleEscape);
   const { success: toastSuccess } = useToast();
@@ -29,8 +30,9 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
-  // Form fields
-  const [label, setLabel] = useState('');
+  // Form fields - pre-fill with default name
+  const defaultLabel = `${provider.display_name} Account ${accountCount + 1}`;
+  const [label, setLabel] = useState(defaultLabel);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   
   // OAuth state
@@ -107,7 +109,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       const res = await apiClient.get('/oauth/google/initiate', {
         params: {
           provider: provider.type,
-          label: label || `${provider.display_name} Account`,
+          label: label || defaultLabel,
         },
       });
       
@@ -140,8 +142,9 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
         if (res.data.done && res.data.success) {
           setStep('success');
           toastSuccess(`${provider.display_name} account connected successfully!`);
+          const finalLabel = label || defaultLabel;
           setTimeout(() => {
-            onSuccess();
+            onSuccess(finalLabel);
             onClose();
           }, 1500);
           return;
@@ -201,8 +204,9 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       
       setStep('success');
       toastSuccess(`${provider.display_name} account connected successfully!`);
+      const finalLabel = label || defaultLabel;
       setTimeout(() => {
-        onSuccess();
+        onSuccess(finalLabel);
         onClose();
       }, 1500);
     } catch (err: any) {
@@ -221,14 +225,15 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
     try {
       await apiClient.post('/storage-accounts', {
         provider_id: provider.id,
-        name: label || `${provider.display_name} Account`,
+        name: label || defaultLabel,
         credentials,
       });
       
       setStep('success');
       toastSuccess(`${provider.display_name} account connected successfully!`);
+      const finalLabel = label || defaultLabel;
       setTimeout(() => {
-        onSuccess();
+        onSuccess(finalLabel);
         onClose();
       }, 1500);
     } catch (err: any) {

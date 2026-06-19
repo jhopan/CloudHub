@@ -224,3 +224,65 @@ func (h *ProviderHandler) TestStorageAccountConnection(w http.ResponseWriter, r 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(result)
 }
+
+// RenameStorageAccount patches only the label (display name) of a storage account
+func (h *ProviderHandler) RenameStorageAccount(w http.ResponseWriter, r *http.Request) {
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	accountIDStr := chi.URLParam(r, "accountID")
+	accountID, err := uuid.Parse(accountIDStr)
+	if err != nil {
+		http.Error(w, "invalid account ID", http.StatusBadRequest)
+		return
+	}
+
+	var req dto.RenameStorageAccountRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Label == "" {
+		http.Error(w, "label is required", http.StatusBadRequest)
+		return
+	}
+
+	account, err := h.providerService.RenameStorageAccount(r.Context(), userID, accountID, req.Label)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(account)
+}
+
+// GetAccountCountForProvider returns the count of accounts for a given provider type
+func (h *ProviderHandler) GetAccountCountForProvider(w http.ResponseWriter, r *http.Request) {
+	userID, err := getUserID(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	providerType := r.URL.Query().Get("provider_type")
+	if providerType == "" {
+		http.Error(w, "provider_type query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	count, err := h.providerService.GetAccountCountForProvider(r.Context(), userID, providerType)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(dto.AccountCountResponse{
+		Count: count,
+	})
+}

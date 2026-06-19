@@ -373,6 +373,60 @@ func (s *ProviderService) DeleteStorageAccount(ctx context.Context, userID, acco
 	return nil
 }
 
+// RenameStorageAccount updates only the label (display name) of a storage account
+func (s *ProviderService) RenameStorageAccount(ctx context.Context, userID, accountID uuid.UUID, label string) (*dto.StorageAccountResponse, error) {
+	account, err := s.accountRepo.GetByID(ctx, accountID)
+	if err != nil {
+		return nil, fmt.Errorf("storage account not found: %w", err)
+	}
+
+	if account.UserID != userID {
+		return nil, fmt.Errorf("unauthorized: account does not belong to user")
+	}
+
+	if label == "" {
+		return nil, fmt.Errorf("label cannot be empty")
+	}
+
+	if err := s.accountRepo.UpdateLabel(ctx, accountID, label); err != nil {
+		return nil, fmt.Errorf("failed to rename account: %w", err)
+	}
+
+	account.Label = label
+
+	provider, err := s.providerRepo.GetByID(ctx, account.ProviderID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get provider: %w", err)
+	}
+
+	return &dto.StorageAccountResponse{
+		ID:               account.ID.String(),
+		UserID:           account.UserID.String(),
+		ProviderID:       account.ProviderID.String(),
+		ProviderName:     provider.DisplayName,
+		ProviderType:     provider.Type,
+		ProviderIconURL:  provider.IconURL,
+		Label:            account.Label,
+		RcloneRemoteName: account.RcloneRemoteName,
+		CapacityBytes:    account.CapacityBytes,
+		UsedBytes:        account.UsedBytes,
+		AvailableBytes:   account.AvailableBytes(),
+		HealthStatus:     account.HealthStatus,
+		IsActive:         account.IsActive,
+		CreatedAt:        account.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		UpdatedAt:        account.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+	}, nil
+}
+
+// GetAccountCountForProvider returns the number of accounts a user has for a specific provider type
+func (s *ProviderService) GetAccountCountForProvider(ctx context.Context, userID uuid.UUID, providerType string) (int, error) {
+	count, err := s.accountRepo.CountByUserAndProvider(ctx, userID, providerType)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get account count: %w", err)
+	}
+	return count, nil
+}
+
 func (s *ProviderService) GetStoragePool(ctx context.Context, userID uuid.UUID) (*dto.StoragePoolResponse, error) {
 	totalCapacity, totalUsed, err := s.accountRepo.GetTotalCapacity(ctx, userID)
 	if err != nil {

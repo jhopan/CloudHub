@@ -175,6 +175,9 @@ export default function ProviderDetailPage() {
   const [testingAccounts, setTestingAccounts] = useState<Set<string>>(new Set());
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
 
+  // Auto health check after OAuth
+  const [pendingHealthCheckLabel, setPendingHealthCheckLabel] = useState<string | null>(null);
+
   // File actions state
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
@@ -265,6 +268,21 @@ export default function ProviderDetailPage() {
     }
   }, [selectedAccountId, currentPath, fetchFiles]);
 
+  // ─── Auto Health Check After OAuth ──────────────────────────────────────
+
+  useEffect(() => {
+    if (pendingHealthCheckLabel && accounts.length > 0) {
+      const newAccount = accounts.find(a => a.label === pendingHealthCheckLabel);
+      if (newAccount) {
+        const timer = setTimeout(() => {
+          handleTestConnection(newAccount.id);
+          setPendingHealthCheckLabel(null);
+        }, 3000);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [pendingHealthCheckLabel, accounts]);
+
   // ─── Test Connection ─────────────────────────────────────────────────────
 
   const handleTestConnection = async (accountId: string) => {
@@ -316,6 +334,21 @@ export default function ProviderDetailPage() {
       setSelectedAccountIds(prev => prev.filter(id => id !== accountId));
     } catch (err: any) {
       alert('Failed to delete account: ' + err.message);
+    }
+  };
+
+  // ─── Rename Account ─────────────────────────────────────────────────────
+
+  const handleRenameAccount = async (accountId: string, newLabel: string) => {
+    try {
+      await apiClient.patch(`/storage-accounts/${accountId}`, { label: newLabel });
+      // Update local state immediately for snappy UX
+      setAccounts(prev => prev.map(a =>
+        a.id === accountId ? { ...a, label: newLabel } : a
+      ));
+    } catch (err: any) {
+      alert('Failed to rename account: ' + err.message);
+      throw err;
     }
   };
 
@@ -703,6 +736,7 @@ export default function ProviderDetailPage() {
                   onTest={() => handleTestConnection(account.id)}
                   onToggle={(active) => handleToggleAccount(account.id, active)}
                   onDelete={() => handleDeleteAccount(account.id, account.label)}
+                  onRename={(newLabel) => handleRenameAccount(account.id, newLabel)}
                 />
               ))}
             </div>
@@ -1122,10 +1156,15 @@ export default function ProviderDetailPage() {
       {showAddModal && provider && (
         <AddAccountModal
           provider={provider}
+          accountCount={accounts.length}
           onClose={() => setShowAddModal(false)}
-          onSuccess={() => {
+          onSuccess={(newAccountLabel) => {
             fetchData(); // Refresh accounts
             setShowAddModal(false);
+            // Auto health check after OAuth - will trigger after 3 seconds
+            if (newAccountLabel) {
+              setPendingHealthCheckLabel(newAccountLabel);
+            }
           }}
         />
       )}

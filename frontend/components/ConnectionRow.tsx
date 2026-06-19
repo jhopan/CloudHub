@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { StatusBadge } from '@/components/StatusBadge';
-import { Zap, Trash2, ToggleLeft, ToggleRight, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Zap, Trash2, ToggleLeft, ToggleRight, Loader2, CheckCircle, XCircle, Pencil, Check, X } from 'lucide-react';
 
 interface StorageAccount {
   id: string;
@@ -28,6 +28,7 @@ interface ConnectionRowProps {
   onTest: () => void;
   onToggle: (active: boolean) => void;
   onDelete: () => void;
+  onRename?: (newLabel: string) => Promise<void>;
 }
 
 export function ConnectionRow({
@@ -39,8 +40,57 @@ export function ConnectionRow({
   onTest,
   onToggle,
   onDelete,
+  onRename,
 }: ConnectionRowProps) {
   const [showTestResult, setShowTestResult] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editLabel, setEditLabel] = useState(account.label);
+  const [savingLabel, setSavingLabel] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Focus input when entering edit mode
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleStartEdit = () => {
+    setEditLabel(account.label);
+    setIsEditing(true);
+  };
+
+  const handleSaveLabel = async () => {
+    const trimmed = editLabel.trim();
+    if (!trimmed || trimmed === account.label) {
+      setIsEditing(false);
+      return;
+    }
+    if (!onRename) return;
+    setSavingLabel(true);
+    try {
+      await onRename(trimmed);
+      setIsEditing(false);
+    } catch {
+      // Keep editing on error
+    } finally {
+      setSavingLabel(false);
+    }
+  };
+
+  const handleCancelEdit = () => {
+    setIsEditing(false);
+    setEditLabel(account.label);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleSaveLabel();
+    } else if (e.key === 'Escape') {
+      handleCancelEdit();
+    }
+  };
 
   const usagePercent = account.capacity_bytes > 0
     ? (account.used_bytes / account.capacity_bytes) * 100
@@ -87,9 +137,56 @@ export function ConnectionRow({
           {/* Header Row */}
           <div className="flex items-start justify-between gap-3 mb-2">
             <div className="flex items-center gap-2 min-w-0">
-              <h3 className="font-semibold text-gray-900 truncate">
-                {account.label}
-              </h3>
+              {isEditing ? (
+                <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                  <input
+                    ref={inputRef}
+                    type="text"
+                    value={editLabel}
+                    onChange={(e) => setEditLabel(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    onBlur={handleSaveLabel}
+                    disabled={savingLabel}
+                    className="px-2 py-0.5 text-sm font-semibold text-gray-900 border border-blue-400 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none min-w-0 flex-1"
+                    maxLength={100}
+                  />
+                  {savingLabel ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+                  ) : (
+                    <>
+                      <button
+                        onClick={handleSaveLabel}
+                        className="p-0.5 rounded hover:bg-green-50 text-green-600 shrink-0"
+                        title="Save"
+                      >
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={handleCancelEdit}
+                        className="p-0.5 rounded hover:bg-red-50 text-red-500 shrink-0"
+                        title="Cancel"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <h3 className="font-semibold text-gray-900 truncate">
+                    {account.label}
+                  </h3>
+                  {onRename && (
+                    <button
+                      onClick={handleStartEdit}
+                      className="p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors shrink-0"
+                      title="Rename account"
+                    >
+                      <Pencil className="w-3 h-3" />
+                    </button>
+                  )}
+                </>
+              )}
               <StatusBadge
                 variant={account.health_status === 'healthy' ? 'success' : 'error'}
                 size="sm"

@@ -116,8 +116,10 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 			r.Post("/storage-accounts", providerHandler.CreateStorageAccount)
 			r.Get("/storage-accounts", providerHandler.GetStorageAccounts)
 			r.Put("/storage-accounts/{accountID}", providerHandler.UpdateStorageAccount)
+			r.Patch("/storage-accounts/{accountID}", providerHandler.RenameStorageAccount)
 			r.Delete("/storage-accounts/{accountID}", providerHandler.DeleteStorageAccount)
 			r.Post("/storage-accounts/{accountID}/test", providerHandler.TestStorageAccountConnection)
+			r.Get("/storage-accounts/count", providerHandler.GetAccountCountForProvider)
 
 			// Account File Browser
 			r.Get("/storage-accounts/{id}/files", accountFileHandler.ListFiles)
