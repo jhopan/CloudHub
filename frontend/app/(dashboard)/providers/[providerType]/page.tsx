@@ -241,7 +241,16 @@ export default function ProviderDetailPage() {
       setLoadingFiles(true);
       const res = await apiClient.get(`/storage-accounts/${selectedAccountId}/files?path=${encodeURIComponent(currentPath)}`);
       const data = res.data;
-      setFiles(data.items || []);
+      // Map rclone PascalCase response to frontend camelCase FileItem
+      const mapped: FileItem[] = (data.items || []).map((item: any) => ({
+        name: item.Name || item.name || '',
+        type: (item.IsDir || item.isDir) ? 'folder' : 'file',
+        size: item.Size ?? item.size ?? 0,
+        mime_type: item.MimeType || item.mime_type || '',
+        modified: item.ModTime || item.modified || '',
+        path: item.Path || item.path || item.Name || item.name || '',
+      }));
+      setFiles(mapped);
     } catch (err: any) {
       console.error('Failed to fetch files:', err);
       setFiles([]);
