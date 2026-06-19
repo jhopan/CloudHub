@@ -348,14 +348,14 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
               {/* Manual callback option */}
               <div className="border-t border-gray-200 pt-4">
                 <p className="text-xs text-gray-600 mb-2">
-                  If the browser doesn't redirect automatically, paste the callback URL here:
+                  After clicking the link and signing in with Google, your browser will show an error page. Copy the <strong>FULL URL</strong> from the address bar and paste it here:
                 </p>
                 <div className="flex gap-2">
                   <input
                     type="text"
                     value={callbackUrl}
                     onChange={(e) => setCallbackUrl(e.target.value)}
-                    placeholder="http://127.0.0.1:53682/..."
+                    placeholder="http://YOUR_VPS_IP:53682/auth?state=...&code=..."
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
                   />
                   <button

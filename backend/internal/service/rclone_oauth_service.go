@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -23,10 +24,11 @@ import (
 
 // RcloneOAuthService handles OAuth via rclone's built-in authorization
 type RcloneOAuthService struct {
-	rcloneClient *rclone.Client
-	rclonePath   string
-	accountRepo  *repository.StorageAccountRepository
-	providerRepo *repository.ProviderRepository
+	rcloneClient       *rclone.Client
+	rclonePath         string
+	accountRepo        *repository.StorageAccountRepository
+	providerRepo       *repository.ProviderRepository
+	oauthRedirectHost  string
 
 	// Track active auth sessions
 	mu       sync.Mutex
@@ -50,27 +52,39 @@ func NewRcloneOAuthService(
 	rclonePath string,
 	accountRepo *repository.StorageAccountRepository,
 	providerRepo *repository.ProviderRepository,
+	oauthRedirectHost string,
 ) *RcloneOAuthService {
 	return &RcloneOAuthService{
-		rcloneClient: rcloneClient,
-		rclonePath:   rclonePath,
-		accountRepo:  accountRepo,
-		providerRepo: providerRepo,
-		sessions:     make(map[string]*authSession),
+		rcloneClient:      rcloneClient,
+		rclonePath:        rclonePath,
+		accountRepo:       accountRepo,
+		providerRepo:      providerRepo,
+		oauthRedirectHost: oauthRedirectHost,
+		sessions:          make(map[string]*authSession),
 	}
 }
 
 // killExistingAuthProcesses kills any existing rclone authorize processes
 // to free up port 53682 before starting a new one
 func (s *RcloneOAuthService) killExistingAuthProcesses() {
-	// Kill all rclone processes (simple and reliable on Windows)
+	// Kill all rclone processes (cross-platform)
 	// This ensures port 53682 is freed
-	killCmd := exec.Command("taskkill", "/IM", "rclone.exe", "/F")
-	if output, err := killCmd.CombinedOutput(); err != nil {
-		// Not an error if no rclone process found
-		log.Printf("[rclone] cleanup: %s", strings.TrimSpace(string(output)))
+	if runtime.GOOS == "windows" {
+		killCmd := exec.Command("taskkill", "/IM", "rclone.exe", "/F")
+		if output, err := killCmd.CombinedOutput(); err != nil {
+			// Not an error if no rclone process found
+			log.Printf("[rclone] cleanup: %s", strings.TrimSpace(string(output)))
+		} else {
+			log.Printf("[rclone] cleaned up existing processes")
+		}
 	} else {
-		log.Printf("[rclone] cleaned up existing processes")
+		killCmd := exec.Command("pkill", "-f", "rclone authorize")
+		if output, err := killCmd.CombinedOutput(); err != nil {
+			// Not an error if no rclone process found
+			log.Printf("[rclone] cleanup: %s", strings.TrimSpace(string(output)))
+		} else {
+			log.Printf("[rclone] cleaned up existing processes")
+		}
 	}
 
 	// Also kill any existing rclone authorize sessions in our map
@@ -154,9 +168,11 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 				parts := strings.Fields(line)
 				for _, part := range parts {
 					if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
-						// Clean up trailing characters
-						url := strings.TrimRight(part, "\"' ,;")
-						select {
+					// Clean up trailing characters
+					url := strings.TrimRight(part, "\"' ,;")
+					// Replace 127.0.0.1 with configured redirect host for VPS/headless
+					url = strings.Replace(url, "127.0.0.1", s.oauthRedirectHost, 1)
+					select {
 						case urlChan <- url:
 						default:
 						}
@@ -193,8 +209,10 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 				parts := strings.Fields(line)
 				for _, part := range parts {
 					if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
+						// Replace 127.0.0.1 with configured redirect host for VPS/headless
+						url := strings.Replace(part, "127.0.0.1", s.oauthRedirectHost, 1)
 						select {
-						case urlChan <- part:
+						case urlChan <- url:
 						default:
 						}
 						break
@@ -243,7 +261,7 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 	case url := <-urlChan:
 		authURL = url
 	case <-time.After(15 * time.Second):
-		authURL = "http://127.0.0.1:53682/auth"
+		authURL = fmt.Sprintf("http://%s:53682/auth", s.oauthRedirectHost)
 	}
 
 	session.authURL = authURL

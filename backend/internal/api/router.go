@@ -67,7 +67,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	fileService := service.NewFileService(fileRepo, accountRepo, sched, rcloneClient, encryptor, transferService)
 
 	// rclone OAuth service (always available - uses rclone authorize)
-	rcloneOAuthService := service.NewRcloneOAuthService(rcloneClient, cfg.RclonePath, accountRepo, providerRepo)
+	rcloneOAuthService := service.NewRcloneOAuthService(rcloneClient, cfg.RclonePath, accountRepo, providerRepo, cfg.OAuthRedirectHost)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)
@@ -82,7 +82,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	settingsHandler := handlers.NewSettingsHandler(userRepo)
 	adminHandler := handlers.NewAdminHandler(userRepo, accountRepo, providerRepo, transferLogRepo, fileRepo, db)
 	sharedLinkRepo := repository.NewSharedLinkRepository(db)
-	sharedLinkHandler := handlers.NewSharedLinkHandler(sharedLinkRepo, accountRepo, rcloneClient)
+	sharedLinkHandler := handlers.NewSharedLinkHandler(sharedLinkRepo, accountRepo, rcloneClient, cfg.AppBaseURL)
 
 	// Health check
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {

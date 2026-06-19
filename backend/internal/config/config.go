@@ -31,6 +31,10 @@ type Config struct {
 	RclonePath       string `mapstructure:"rclone_path"`
 	RcloneConfigPath string `mapstructure:"rclone_config_path"`
 
+	// App URLs (for VPS/headless deployment)
+	AppBaseURL        string `mapstructure:"app_base_url"`
+	OAuthRedirectHost string `mapstructure:"oauth_redirect_host"`
+
 	// Upload
 	MaxUploadSize     int64 `mapstructure:"max_upload_size"`
 	UploadConcurrency int   `mapstructure:"upload_concurrency"`
@@ -61,6 +65,8 @@ func Load() (*Config, error) {
 	viper.SetDefault("jwt_refresh_token_ttl", 604800) // 7 days
 	viper.SetDefault("rclone_path", "rclone")
 	viper.SetDefault("rclone_config_path", "/etc/rclone/rclone.conf")
+	viper.SetDefault("app_base_url", "http://localhost:3000")
+	viper.SetDefault("oauth_redirect_host", "127.0.0.1")
 	viper.SetDefault("max_upload_size", 10737418240) // 10 GB
 	viper.SetDefault("upload_concurrency", 10)
 	viper.SetDefault("worker_capacity_refresh_interval", 900) // 15 min

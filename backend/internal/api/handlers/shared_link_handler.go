@@ -24,17 +24,20 @@ type SharedLinkHandler struct {
 	sharedLinkRepo *repository.SharedLinkRepository
 	accountRepo    *repository.StorageAccountRepository
 	rcloneClient   *rclone.Client
+	appBaseURL     string
 }
 
 func NewSharedLinkHandler(
 	sharedLinkRepo *repository.SharedLinkRepository,
 	accountRepo *repository.StorageAccountRepository,
 	rcloneClient *rclone.Client,
+	appBaseURL string,
 ) *SharedLinkHandler {
 	return &SharedLinkHandler{
 		sharedLinkRepo: sharedLinkRepo,
 		accountRepo:    accountRepo,
 		rcloneClient:   rcloneClient,
+		appBaseURL:     appBaseURL,
 	}
 }
 
@@ -137,7 +140,7 @@ func (h *SharedLinkHandler) CreateSharedLink(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Build share URL
-	shareURL := fmt.Sprintf("http://localhost:3000/s/%s", link.Token)
+	shareURL := fmt.Sprintf("%s/s/%s", h.appBaseURL, link.Token)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -180,7 +183,7 @@ func (h *SharedLinkHandler) ListSharedLinks(w http.ResponseWriter, r *http.Reque
 	for i, link := range links {
 		result[i] = LinkWithUrl{
 			SharedLink: link,
-			ShareURL:   fmt.Sprintf("http://localhost:3000/s/%s", link.Token),
+			ShareURL:   fmt.Sprintf("%s/s/%s", h.appBaseURL, link.Token),
 		}
 	}
 

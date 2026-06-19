@@ -24,6 +24,10 @@ encryption_key: CloudHub32CharEncryptionKey2026X
 rclone_path: rclone
 rclone_config_path: rclone.conf
 
+# App URLs (for VPS/headless deployment)
+app_base_url: "http://localhost:3000"
+oauth_redirect_host: "127.0.0.1"
+
 # Upload
 max_upload_size: 10737418240
 upload_concurrency: 10
