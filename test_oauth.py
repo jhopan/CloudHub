@@ -1,27 +1,46 @@
-import requests
-import time
+#!/usr/bin/env python3
+import urllib.request
+import json
+import ssl
 
-BASE = "http://localhost:8080/api/v1"
+ctx = ssl.create_default_context()
+ctx.check_hostname = False
+ctx.verify_mode = ssl.CERT_NONE
+
+BASE = "http://213.35.108.142:8989/api/v1"
 
 # Login
-r = requests.post(BASE + "/auth/login", json={"email": "demo@demo.com", "password": "***"})
-token = r.json().get("access_token", "")
-headers = {"Authorization": "Bearer " + token}
+login_data = json.dumps({"email": "admin@vps.io", "password": "Admin@123456"}).encode()
+req = urllib.request.Request(BASE + "/auth/login", data=login_data, headers={"Content-Type": "application/json"})
+resp = urllib.request.urlopen(req, timeout=10)
+body = json.loads(resp.read())
+token = body["access_token"]
 print("Login OK")
 
-# Start OAuth
-print("\n=== Starting OAuth ===")
-r2 = requests.get(BASE + "/oauth/google/initiate?provider=gdrive&label=MyDrive", headers=headers, timeout=15)
-print("Status:", r2.status_code)
-result = r2.json()
-session_id = result.get("session_id", "")
-auth_url = result.get("auth_url", "")
-print("Auth URL:", auth_url)
-print("Session ID:", session_id)
+# Initiate OAuth
+header = {"Authorization": "Bearer " + token}
+req2 = urllib.request.Request(BASE + "/oauth/google/initiate?provider=gdrive", headers=header)
+resp2 = urllib.request.urlopen(req2, timeout=30)
+oauth = json.loads(resp2.read())
+print("\n=== OAUTH RESPONSE ===")
+print(json.dumps(oauth, indent=2))
 
-# Poll status a few times
-print("\n=== Polling Status ===")
-for i in range(3):
-    time.sleep(2)
-    r3 = requests.get(BASE + "/oauth/status?session_id=" + session_id, headers=headers, timeout=5)
-    print("Poll", i+1, ":", r3.text[:200])
+# Check auth URL
+auth_url = oauth.get("auth_url", "")
+print("\n=== AUTH URL ===")
+print(auth_url)
+
+if "127.0.0.1" in auth_url:
+    print("\n WARNING: URL contains 127.0.0.1!")
+else:
+    print("\n OK: URL does not contain 127.0.0.1")
+
+# Check callback proxy
+proxy = oauth.get("callback_proxy", oauth.get("callback_proxy_url", ""))
+print("\n=== CALLBACK PROXY ===")
+print(proxy if proxy else "NOT SET")
+
+# Check session ID
+sid = oauth.get("session_id", "")
+print("\n=== SESSION ID ===")
+print(sid if sid else "NOT SET")
