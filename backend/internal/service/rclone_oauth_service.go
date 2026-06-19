@@ -404,7 +404,7 @@ func (s *RcloneOAuthService) exchangeCodeForToken(ctx context.Context, code, bac
 	redirectURI := "http://127.0.0.1:53682/auth"
 
 	data := fmt.Sprintf(
-		"code=%s&client_id=202264815644.apps.googleusercontent.com&client_secret=X4Z3ca8xfWDb1Voo-F9a7l&redirect_uri=%s&grant_type=authorization_code",
+		"code=%s&client_id=202264815644.apps.googleusercontent.com&client_secret=X4Z3ca8xfWDb1Voo-F9a7ZxJ&redirect_uri=%s&grant_type=authorization_code",
 		url.QueryEscape(code), url.QueryEscape(redirectURI),
 	)
 
