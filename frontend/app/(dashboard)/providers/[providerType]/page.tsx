@@ -1158,12 +1158,26 @@ export default function ProviderDetailPage() {
           provider={provider}
           accountCount={accounts.length}
           onClose={() => setShowAddModal(false)}
-          onSuccess={(newAccountLabel) => {
-            fetchData(); // Refresh accounts
+          onSuccess={async (newAccountLabel) => {
+            await fetchData(); // Refresh accounts - await to ensure state updates
             setShowAddModal(false);
-            // Auto health check after OAuth - will trigger after 3 seconds
+            // Auto health check: find new account and test after 3s
             if (newAccountLabel) {
-              setPendingHealthCheckLabel(newAccountLabel);
+              // Use setTimeout to let state updates settle first
+              setTimeout(async () => {
+                // Re-fetch to get latest accounts
+                try {
+                  const accRes = await apiClient.get('/storage-accounts');
+                  const allAccs = accRes.data.filter((a: any) => a.provider_type === providerType);
+                  setAccounts(allAccs);
+                  const newAcc = allAccs.find((a: any) => a.label === newAccountLabel);
+                  if (newAcc) {
+                    handleTestConnection(newAcc.id);
+                  }
+                } catch (e) {
+                  console.error('Auto health check failed:', e);
+                }
+              }, 3000);
             }
           }}
         />
