@@ -245,14 +245,42 @@ export function AddAccountModal({ provider, accountCount = 0, onClose, onSuccess
   };
 
   const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(text);
+    } else {
+      // Fallback for HTTP (non-secure context)
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.top = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+      document.body.removeChild(ta);
+    }
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
   const copyAuthUrl = () => {
     if (authUrl) {
-      navigator.clipboard.writeText(authUrl);
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(authUrl);
+      } else {
+        // Fallback for HTTP (non-secure context)
+        const ta = document.createElement('textarea');
+        ta.value = authUrl;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.top = '-9999px';
+        document.body.appendChild(ta);
+        ta.focus();
+        ta.select();
+        try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+        document.body.removeChild(ta);
+      }
       setCopiedAuth(true);
       setTimeout(() => setCopiedAuth(false), 2000);
     }
