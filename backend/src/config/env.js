@@ -40,6 +40,10 @@ export const env = {
 	yandexClientSecret: process.env.YANDEX_CLIENT_SECRET || '',
 	yandexRedirectUri:
 		process.env.YANDEX_REDIRECT_URI || 'http://localhost:8787/api/accounts/yandex/callback',
+	boxClientId: process.env.BOX_CLIENT_ID || '',
+	boxClientSecret: process.env.BOX_CLIENT_SECRET || '',
+	boxRedirectUri:
+		process.env.BOX_REDIRECT_URI || 'http://localhost:8787/api/accounts/box/callback',
 };
 
 export function redactEnv() {
@@ -60,5 +64,7 @@ export function redactEnv() {
 		dropboxRedirectUri: env.dropboxRedirectUri,
 		yandexClientId: env.yandexClientId ? '[configured]' : '[missing]',
 		yandexRedirectUri: env.yandexRedirectUri,
+		boxClientId: env.boxClientId ? '[configured]' : '[missing]',
+		boxRedirectUri: env.boxRedirectUri,
 	};
 }

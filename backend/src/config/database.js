@@ -7,7 +7,7 @@ const __dirname = path.dirname(__filename);
 const dbPath = path.resolve(__dirname, '../../cloudhub.db');
 
 export const LOCAL_USER_ID = 'local-default-user';
-export const LOCAL_USER_EMAIL = 'local@omnicloud.local';
+export const LOCAL_USER_EMAIL = 'local@cloudhub.local';
 
 export const db = new Database(dbPath);
 db.pragma('journal_mode = WAL');

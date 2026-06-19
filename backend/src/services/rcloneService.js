@@ -360,6 +360,32 @@ export async function listRemotes() {
 }
 
 // ---------------------------------------------------------------------------
+// Convenience aliases
+// ---------------------------------------------------------------------------
+
+/**
+ * Create (or overwrite) an rclone remote – convenience alias for configCreate.
+ *
+ * @param {string} name   - Remote name (e.g. "cloudhub_protondrive_42")
+ * @param {string} type   - Backend type (e.g. "protondrive", "filen", "box")
+ * @param {object} config - Key-value config parameters for the backend.
+ * @returns {Promise<void>}
+ */
+export async function createRemote(name, type, config = {}) {
+	return configCreate(name, type, config);
+}
+
+/**
+ * Delete an rclone remote – convenience alias for configDelete.
+ *
+ * @param {string} name - Remote name to remove
+ * @returns {Promise<void>}
+ */
+export async function removeRemote(name) {
+	return configDelete(name);
+}
+
+// ---------------------------------------------------------------------------
 // Exports for testing
 // ---------------------------------------------------------------------------
 

@@ -130,6 +130,13 @@ cd frontend && npm install && npm run build
 | GET | `/api/transfers` | Transfer logs |
 | GET | `/api/health/accounts` | Health status |
 
+## Credits
+
+- **Forked from [OmniCloud](https://github.com/omnicloud)** — Original cloud storage gateway (MIT License)
+- **Architecture inspired by [9Drive](https://github.com/nicepkg/9drive)** — Multi-provider storage concept
+- **rclone** — Storage engine powering 128+ cloud storage providers
+- **by JhopanStore** — Enhanced with HUB, rclone providers, shared links, transfer logs & health checks
+
 ## License
 
-MIT (forked from [OmniCloud](https://github.com/omnicloud/omnicloud))
+MIT

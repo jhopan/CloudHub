@@ -18,6 +18,7 @@ import DriveShell from '../components/DriveShell.vue';
 import TruncateMarquee from '../components/TruncateMarquee.vue';
 import { useFileTreeStore } from '../stores/fileTree';
 import { useAccountManagementStore } from '../stores/accountManagement';
+import { getProviderEmoji, getProviderLabel } from '../utils/providerIcons';
 
 const { t } = useI18n();
 
@@ -35,6 +36,19 @@ const storagePercent = computed(() => {
 	if (!totalSpace.value) return 0;
 	return Math.min(100, Math.round((totalUsed.value / totalSpace.value) * 100));
 });
+
+const totalFree = computed(() => Math.max(0, totalSpace.value - totalUsed.value));
+const totalAccounts = computed(() => accounts.value.length);
+const usagePercent = computed(() => {
+	if (!totalSpace.value) return 0;
+	return Math.min(100, (totalUsed.value / totalSpace.value) * 100);
+});
+
+function getAccountUsagePercent(account) {
+	const total = Number(account.total_space || 0);
+	if (!total) return 0;
+	return Math.min(100, (Number(account.used_space || 0) / total) * 100);
+}
 
 function formatBytes(value) {
 	if (!value) return '0 B';
@@ -103,6 +117,55 @@ onMounted(loadPage);
 					<button type="button" class="grid size-9 place-items-center rounded-full text-[#5f6368] hover:bg-black/5 dark:text-slate-400 dark:hover:bg-white/8">
 						<IconLayoutList :size="18" :stroke="2" />
 					</button>
+				</div>
+			</div>
+
+			<!-- Storage HUB Summary -->
+			<div v-if="totalAccounts > 0" class="hub-summary bg-gradient-to-r from-blue-600 to-indigo-700 rounded-xl p-6 text-white mb-6">
+				<div class="flex items-center justify-between">
+					<div>
+						<h2 class="text-2xl font-bold">☁️ {{ t('hub.myStorageHub') }}</h2>
+						<p class="text-blue-100 mt-1">{{ t('hub.providersConnected', { count: totalAccounts }) }}</p>
+					</div>
+					<div class="text-right">
+						<div class="text-3xl font-bold">{{ formatBytes(totalUsed) }}</div>
+						<div class="text-blue-200">{{ t('hub.ofCapacity', { capacity: formatBytes(totalSpace) }) }}</div>
+					</div>
+				</div>
+				<div class="mt-4 bg-white/20 rounded-full h-3">
+					<div class="bg-white rounded-full h-3 transition-all" :style="{ width: usagePercent + '%' }" />
+				</div>
+				<div class="flex justify-between mt-2 text-sm text-blue-100">
+					<span>{{ usagePercent.toFixed(1) }}% {{ t('hub.used') }}</span>
+					<span>{{ formatBytes(totalFree) }} {{ t('hub.available') }}</span>
+				</div>
+			</div>
+
+			<!-- Provider breakdown cards -->
+			<div v-if="totalAccounts > 0" class="provider-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+				<div v-for="account in accounts" :key="account.id"
+					class="provider-card rounded-lg p-4 border border-[#e0e3e7] bg-[#f8fafd] dark:border-slate-700 dark:bg-slate-900/70">
+					<div class="flex items-center gap-3">
+						<div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-white dark:bg-slate-800">
+							<img v-if="providerIcon(account.provider)" :src="providerIcon(account.provider)" :alt="providerLabel(account.provider)" class="size-5 object-contain" />
+							<span v-else class="text-lg">{{ getProviderEmoji(account.provider) }}</span>
+						</div>
+						<div class="flex-1 min-w-0">
+							<div class="font-medium truncate">{{ account.email }}</div>
+							<div class="text-xs text-[#5f6368] dark:text-slate-400">{{ providerLabel(account.provider) }}</div>
+						</div>
+						<span :class="account.status === 'active' ? 'text-emerald-500' : 'text-red-500'"
+							class="text-xs font-bold shrink-0">● {{ account.status }}</span>
+					</div>
+					<div class="mt-3">
+						<div class="flex justify-between text-xs text-[#5f6368] dark:text-slate-400">
+							<span>{{ formatBytes(account.used_space) }}</span>
+							<span>{{ formatBytes(account.total_space) }}</span>
+						</div>
+						<div class="bg-[#e0e3e7] dark:bg-slate-700 rounded-full h-2 mt-1">
+							<div class="bg-[#1a73e8] rounded-full h-2 transition-all" :style="{ width: getAccountUsagePercent(account) + '%' }" />
+						</div>
+					</div>
 				</div>
 			</div>
 

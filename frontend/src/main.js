@@ -5,7 +5,7 @@ import App from './App.vue';
 import router from './router';
 import { i18n } from './i18n';
 
-const storedTheme = window.localStorage.getItem('omnicloud-theme');
+const storedTheme = window.localStorage.getItem('cloudhub-theme');
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 const initialTheme = storedTheme || (prefersDark ? 'dark' : 'light');
 

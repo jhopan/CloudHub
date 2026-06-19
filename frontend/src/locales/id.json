@@ -68,6 +68,7 @@
 	},
 	"nav": {
 		"home": "Beranda",
+		"hub": "Storage HUB",
 		"myDrive": "Drive Saya",
 		"shared": "Dibagikan",
 		"recent": "Terbaru",
@@ -76,7 +77,7 @@
 		"trash": "Sampah"
 	},
 	"header": {
-		"searchPlaceholder": "Telusuri di OmniCloud",
+		"searchPlaceholder": "Telusuri di CloudHub",
 		"openNav": "Buka menu navigasi",
 		"closeNav": "Tutup menu navigasi",
 		"openProfile": "Buka profil creator",
@@ -106,6 +107,22 @@
 		"fileOwner": "Pemilik",
 		"fileModified": "Terakhir diubah",
 		"fileSize": "Ukuran file"
+	},
+	"hub": {
+		"title": "Storage HUB",
+		"myStorageHub": "Storage HUB Saya",
+		"providersConnected": "{count} penyedia terhubung",
+		"ofCapacity": "dari {capacity}",
+		"used": "terpakai",
+		"available": "tersedia",
+		"upload": "Unggah",
+		"newFolder": "Folder Baru",
+		"refreshAll": "Segarkan Semua",
+		"providerBreakdown": "Rincian penyedia",
+		"allFiles": "Semua file dari semua penyedia",
+		"openDrive": "Buka Drive",
+		"noAccounts": "Belum ada akun terhubung. Hubungkan penyedia dari halaman Penyimpanan.",
+		"noFiles": "Belum ada file dari penyedia yang terhubung."
 	},
 	"recent": {
 		"today": "Hari ini",
@@ -188,7 +205,7 @@
 		"lastSync": "Sinkronisasi terakhir: {date}",
 		"disconnectAccount": "Putuskan akun",
 		"disconnectConfirm": "Putuskan akun {email}?",
-		"disconnectConfirmDesc": "Akun akan dihapus dari OmniCloud tapi data di cloud asli tetap aman."
+		"disconnectConfirmDesc": "Akun akan dihapus dari CloudHub tapi data di cloud asli tetap aman."
 	},
 	"providers": {
 		"googleDrive": "Google Drive",
@@ -247,36 +264,36 @@
 		}
 	},
 	"help": {
-		"title": "Bantuan cepat OmniCloud",
+		"title": "Bantuan cepat CloudHub",
 		"centerTitle": "Pusat Bantuan",
-		"subtitle": "Ringkasan singkat untuk membantu Anda memahami alur utama OmniCloud dengan lebih cepat.",
+		"subtitle": "Ringkasan singkat untuk membantu Anda memahami alur utama CloudHub dengan lebih cepat.",
 		"createFolder": "Buat folder baru",
 		"createFolderDesc": "Gunakan tombol Baru untuk membuat folder baru langsung dari penyimpanan aktif.",
 		"uploadFiles": "Upload file atau folder",
 		"uploadFilesDesc": "Unggah file maupun folder dan pantau progresnya lewat notifikasi proses di aplikasi.",
 		"searchFiles": "Cari file lebih cepat",
-		"searchFilesDesc": "Manfaatkan kolom pencarian di bagian atas untuk menelusuri file di OmniCloud.",
+		"searchFilesDesc": "Manfaatkan kolom pencarian di bagian atas untuk menelusuri file di CloudHub.",
 		"usageTips": "Tips penggunaan",
 		"usageTipsList": [
 			"Gunakan menu sidebar untuk berpindah antara beranda, drive, dan ringkasan penyimpanan.",
-			"Klik logo OmniCloud di desktop untuk membuka profil creator dan informasi proyek open source.",
+			"Klik logo CloudHub di desktop untuk membuka profil creator dan informasi proyek open source.",
 			"Tekan tombol Esc untuk menutup dialog yang sedang terbuka."
 		],
 		"connectAccount": "Cara menghubungkan akun cloud",
 		"connectAccountSteps": [
 			"Buka halaman Penyimpanan, lalu tekan tombol Hubungkan untuk memilih provider seperti Google Drive, OneDrive, Dropbox, atau MEGA.",
 			"Setelah itu ikuti proses login atau otorisasi sesuai provider. Jika akun terputus, suspended, atau token sudah tidak valid, gunakan tombol Connect untuk mencoba koneksi ulang.",
-			"Sesudah berhasil terhubung, kapasitas penyimpanan dan file dari akun tersebut akan tampil otomatis di OmniCloud."
+			"Sesudah berhasil terhubung, kapasitas penyimpanan dan file dari akun tersebut akan tampil otomatis di CloudHub."
 		],
-		"howItWorks": "Cara kerja OmniCloud",
-		"howItWorksStep1": "Anda menghubungkan beberapa akun cloud dari berbagai provider ke dalam satu dashboard OmniCloud.",
+		"howItWorks": "Cara kerja CloudHub",
+		"howItWorksStep1": "Anda menghubungkan beberapa akun cloud dari berbagai provider ke dalam satu dashboard CloudHub.",
 		"howItWorksStep2": "Aplikasi akan menyinkronkan metadata file dan kapasitas penyimpanan agar semua akun bisa dilihat dari satu tempat.",
-		"howItWorksStep3": "Saat Anda membuat folder, upload, rename, atau delete, OmniCloud akan meneruskan aksi itu ke provider terkait dan menampilkan progresnya di antarmuka.",
-		"howItWorksStep4": "Dengan begitu, OmniCloud berfungsi sebagai lapisan manajemen terpadu untuk banyak akun cloud dalam satu pengalaman yang lebih rapi."
+		"howItWorksStep3": "Saat Anda membuat folder, upload, rename, atau delete, CloudHub akan meneruskan aksi itu ke provider terkait dan menampilkan progresnya di antarmuka.",
+		"howItWorksStep4": "Dengan begitu, CloudHub berfungsi sebagai lapisan manajemen terpadu untuk banyak akun cloud dalam satu pengalaman yang lebih rapi."
 	},
 	"profile": {
 		"title": "Kredit",
-		"subtitle": "Tentang pembuat OmniCloud",
+		"subtitle": "Tentang pembuat CloudHub",
 		"letsConnect": "Mari Kita Terhubung",
 		"letsConnectDesc": "Ikuti perjalanan, karya, dan aktivitas terbaru saya melalui kanal resmi berikut",
 		"openSource": "Open Source di GitHub",

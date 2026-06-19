@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import HomeView from '../views/HomeView.vue';
+import HubView from '../views/HubView.vue';
 import MyDriveView from '../views/MyDriveView.vue';
 import RecentView from '../views/RecentView.vue';
 import SharedWithMeView from '../views/SharedWithMeView.vue';
@@ -28,6 +29,11 @@ const router = createRouter({
 			path: '/',
 			name: 'home',
 			component: HomeView,
+		},
+		{
+			path: '/hub',
+			name: 'hub',
+			component: HubView,
 		},
 		{
 			path: '/my-drive',

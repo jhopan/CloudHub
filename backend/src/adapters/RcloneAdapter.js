@@ -129,7 +129,7 @@ export class RcloneAdapter extends BaseCloudAdapter {
 
 	/**
 	 * Fetch the full directory tree from the rclone remote and map it into
-	 * the OmniCloud flat record format used by every other adapter.
+	 * the CloudHub flat record format used by every other adapter.
 	 */
 	async fetchStructure() {
 		await this.ensureRemote();

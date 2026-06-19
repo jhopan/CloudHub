@@ -16,6 +16,14 @@ const adapters = {
 	pcloud: PCloudAdapter,
 	yandex: YandexAdapter,
 	rclone: RcloneAdapter,
+
+	// Providers backed by rclone's native backends (free tiers available)
+	protondrive: RcloneAdapter,
+	filen: RcloneAdapter,
+	jottacloud: RcloneAdapter,
+	seafile: RcloneAdapter,
+	nextcloud: RcloneAdapter, // rclone type: webdav
+	box: RcloneAdapter,
 };
 
 export function createAdapter(account) {

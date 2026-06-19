@@ -68,6 +68,7 @@
 	},
 	"nav": {
 		"home": "Home",
+		"hub": "Storage HUB",
 		"myDrive": "My Drive",
 		"shared": "Shared",
 		"recent": "Recent",
@@ -76,7 +77,7 @@
 		"trash": "Trash"
 	},
 	"header": {
-		"searchPlaceholder": "Search in OmniCloud",
+		"searchPlaceholder": "Search in CloudHub",
 		"openNav": "Open navigation menu",
 		"closeNav": "Close navigation menu",
 		"openProfile": "Open creator profile",
@@ -106,6 +107,22 @@
 		"fileOwner": "Owner",
 		"fileModified": "Last modified",
 		"fileSize": "File size"
+	},
+	"hub": {
+		"title": "Storage HUB",
+		"myStorageHub": "My Storage HUB",
+		"providersConnected": "{count} providers connected",
+		"ofCapacity": "of {capacity}",
+		"used": "used",
+		"available": "available",
+		"upload": "Upload",
+		"newFolder": "New Folder",
+		"refreshAll": "Refresh All",
+		"providerBreakdown": "Provider breakdown",
+		"allFiles": "All files across providers",
+		"openDrive": "Open Drive",
+		"noAccounts": "No connected accounts yet. Connect a provider from the Storage page.",
+		"noFiles": "No files yet across your connected providers."
 	},
 	"recent": {
 		"today": "Today",
@@ -188,7 +205,7 @@
 		"lastSync": "Last sync: {date}",
 		"disconnectAccount": "Disconnect account",
 		"disconnectConfirm": "Disconnect {email}?",
-		"disconnectConfirmDesc": "Account will be removed from OmniCloud but data in the original cloud remains safe."
+		"disconnectConfirmDesc": "Account will be removed from CloudHub but data in the original cloud remains safe."
 	},
 	"providers": {
 		"googleDrive": "Google Drive",
@@ -247,36 +264,36 @@
 		}
 	},
 	"help": {
-		"title": "OmniCloud Quick Help",
+		"title": "CloudHub Quick Help",
 		"centerTitle": "Help Center",
-		"subtitle": "A brief summary to help you understand OmniCloud's main workflow faster.",
+		"subtitle": "A brief summary to help you understand CloudHub's main workflow faster.",
 		"createFolder": "Create new folder",
 		"createFolderDesc": "Use the New button to create a new folder directly from active storage.",
 		"uploadFiles": "Upload file or folder",
 		"uploadFilesDesc": "Upload files or folders and monitor progress through the app's process notifications.",
 		"searchFiles": "Search files faster",
-		"searchFilesDesc": "Use the search box at the top to browse files in OmniCloud.",
+		"searchFilesDesc": "Use the search box at the top to browse files in CloudHub.",
 		"usageTips": "Usage tips",
 		"usageTipsList": [
 			"Use the sidebar menu to switch between home, drive, and storage overview.",
-			"Click the OmniCloud logo on desktop to open the creator profile and open source project info.",
+			"Click the CloudHub logo on desktop to open the creator profile and open source project info.",
 			"Press the Esc button to close any open dialog."
 		],
 		"connectAccount": "How to connect a cloud account",
 		"connectAccountSteps": [
 			"Open the Storage page, then press the Connect button to select a provider like Google Drive, OneDrive, Dropbox, or MEGA.",
 			"Then follow the login or authorization process according to the provider. If the account is disconnected, suspended, or the token is no longer valid, use the Connect button to try reconnecting.",
-			"After successfully connected, the storage capacity and files from that account will automatically appear in OmniCloud."
+			"After successfully connected, the storage capacity and files from that account will automatically appear in CloudHub."
 		],
-		"howItWorks": "How OmniCloud Works",
-		"howItWorksStep1": "You connect multiple cloud accounts from various providers into one OmniCloud dashboard.",
+		"howItWorks": "How CloudHub Works",
+		"howItWorksStep1": "You connect multiple cloud accounts from various providers into one CloudHub dashboard.",
 		"howItWorksStep2": "The app will sync file metadata and storage capacity so all accounts can be viewed from one place.",
-		"howItWorksStep3": "When you create a folder, upload, rename, or delete, OmniCloud will forward that action to the related provider and display the progress in the interface.",
-		"howItWorksStep4": "This way, OmniCloud serves as a unified management layer for many cloud accounts in a neater experience."
+		"howItWorksStep3": "When you create a folder, upload, rename, or delete, CloudHub will forward that action to the related provider and display the progress in the interface.",
+		"howItWorksStep4": "This way, CloudHub serves as a unified management layer for many cloud accounts in a neater experience."
 	},
 	"profile": {
 		"title": "Credits",
-		"subtitle": "About the creator of OmniCloud",
+		"subtitle": "About the creator of CloudHub",
 		"letsConnect": "Let's Connect",
 		"letsConnectDesc": "Follow my journey, works, and latest activities through the following official channels",
 		"openSource": "Open Source on GitHub",

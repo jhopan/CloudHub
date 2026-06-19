@@ -6,7 +6,7 @@ const SUPPORTED_LOCALES = ['id', 'en'];
 const DEFAULT_LOCALE = 'id';
 
 function detectLocale() {
-	const stored = window.localStorage.getItem('omnicloud-language');
+	const stored = window.localStorage.getItem('cloudhub-language');
 	if (stored && SUPPORTED_LOCALES.includes(stored)) {
 		return stored;
 	}
@@ -32,7 +32,7 @@ export const i18n = createI18n({
 export function setLocale(locale) {
 	if (SUPPORTED_LOCALES.includes(locale)) {
 		i18n.global.locale.value = locale;
-		window.localStorage.setItem('omnicloud-language', locale);
+		window.localStorage.setItem('cloudhub-language', locale);
 		document.documentElement.setAttribute('lang', locale);
 	}
 }

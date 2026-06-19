@@ -20,7 +20,7 @@ function toggleTheme() {
 	const next = isDark.value ? 'light' : 'dark';
 	isDark.value = !isDark.value;
 	document.documentElement.classList.toggle('dark', next === 'dark');
-	window.localStorage.setItem('omnicloud-theme', next);
+	window.localStorage.setItem('cloudhub-theme', next);
 }
 
 function toggleLanguage() {
@@ -68,8 +68,8 @@ function toggleLanguage() {
 
 			<p class="auth-hero__foot">
 				© {{ new Date().getFullYear() }} CloudHub. {{ t('auth.footerMadeBy') }}
-				<a href="https://github.com/dimartarmizi" target="_blank" rel="noreferrer">Dimar Tarmizi</a>.
-				{{ t('auth.footerOpenSourcePrefix') }} <a href="https://github.com/dimartarmizi/CloudHub" target="_blank" rel="noreferrer">{{ t('auth.footerOpenSource') }}</a>.
+				<a href="https://github.com/jhopan/CloudHub" target="_blank" rel="noreferrer">JhopanStore</a>.
+				{{ t('auth.footerOpenSourcePrefix') }} <a href="https://github.com/jhopan/CloudHub" target="_blank" rel="noreferrer">{{ t('auth.footerOpenSource') }}</a>.
 			</p>
 		</aside>
 

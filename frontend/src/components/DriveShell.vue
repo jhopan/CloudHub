@@ -29,6 +29,7 @@ import {
 	IconUserFilled,
 	IconLanguage,
 	IconLogout,
+	IconLayoutGridFilled,
 } from '@tabler/icons-vue';
 import { useRouter } from 'vue-router';
 import { useAccountManagementStore } from '../stores/accountManagement';
@@ -159,7 +160,7 @@ function handleWindowKeydown(event) {
 function applyTheme(nextTheme) {
 	theme.value = nextTheme;
 	document.documentElement.classList.toggle('dark', nextTheme === 'dark');
-	window.localStorage.setItem('omnicloud-theme', nextTheme);
+	window.localStorage.setItem('cloudhub-theme', nextTheme);
 }
 
 function toggleTheme() {
@@ -182,6 +183,7 @@ onBeforeUnmount(() => {
 
 const navItems = computed(() => [
 	{ id: 'home', label: t('nav.home'), icon: IconHome, activeIcon: IconHomeFilled, to: '/' },
+	{ id: 'hub', label: t('nav.hub'), icon: IconLayoutGrid, activeIcon: IconLayoutGridFilled, to: '/hub' },
 	{ id: 'drive', label: t('nav.myDrive'), icon: IconFolder, activeIcon: IconFolderFilled, to: '/my-drive' },
 	{ id: 'shared', label: t('nav.shared'), icon: IconUsers, activeIcon: IconUserFilled, to: '/shared-with-me' },
 	{ id: 'recent', label: t('nav.recent'), icon: IconClockHour4, activeIcon: IconClockHour4Filled, to: '/recent' },
@@ -191,11 +193,7 @@ const navItems = computed(() => [
 
 const profileLinks = [
 	{ id: 'website', label: 'Website', href: 'https://tarmizi.id' },
-	{ id: 'github', label: 'GitHub', href: 'https://github.com/dimartarmizi' },
-	{ id: 'linkedin', label: 'LinkedIn', href: 'https://www.linkedin.com/in/dimartarmizi' },
-	{ id: 'instagram', label: 'Instagram', href: 'https://www.instagram.com/dimartarmizi' },
-	{ id: 'facebook', label: 'Facebook', href: 'https://www.facebook.com/dimartarmizi' },
-	{ id: 'reddit', label: 'Reddit', href: 'https://www.reddit.com/user/dimartarmizi' },
+	{ id: 'github', label: 'GitHub', href: 'https://github.com/jhopan/CloudHub' },
 ];
 </script>
 

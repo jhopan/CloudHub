@@ -11,7 +11,7 @@ const router = Router();
 router.get('/health', (req, res) => {
 	res.json({
 		status: 'ok',
-		service: 'omnicloud-api',
+		service: 'cloudhub-api',
 		config: redactEnv(),
 		auth: getAuthSummary(req.user),
 		sync: getLastSyncReport(),

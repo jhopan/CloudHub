@@ -213,4 +213,10 @@ export const api = {
 			body: JSON.stringify(payload),
 		});
 	},
+	getHubSummary() {
+		return request('/hub/summary');
+	},
+	listHubFiles() {
+		return request('/hub/files');
+	},
 };
