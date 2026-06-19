@@ -284,6 +284,18 @@ func (s *RcloneOAuthService) finalizeAuth(ctx context.Context, session *authSess
 		"token": session.token,
 	})
 
+	// Get storage capacity via rclone about
+	var capacityBytes int64
+	var usedBytes int64
+	aboutInfo, aboutErr := s.rcloneClient.About(ctx, remoteName)
+	if aboutErr != nil {
+		log.Printf("[rclone] warning: about failed for %s: %v", remoteName, aboutErr)
+	} else {
+		capacityBytes = aboutInfo.Total
+		usedBytes = aboutInfo.Used
+		log.Printf("[rclone] about OK for %s: total=%d used=%d", remoteName, capacityBytes, usedBytes)
+	}
+
 	account := &model.StorageAccount{
 		UserID:           session.userID,
 		ProviderID:       provider.ID,
@@ -292,6 +304,8 @@ func (s *RcloneOAuthService) finalizeAuth(ctx context.Context, session *authSess
 		Credentials:      credentialsJSON,
 		HealthStatus:     "healthy",
 		IsActive:         true,
+		CapacityBytes:    capacityBytes,
+		UsedBytes:        usedBytes,
 	}
 
 	if err := s.accountRepo.Create(ctx, account); err != nil {
