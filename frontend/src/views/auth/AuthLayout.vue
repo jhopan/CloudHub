@@ -66,6 +66,15 @@ function toggleLanguage() {
 				</ul>
 			</div>
 
+			<div class="auth-hero__attrib">
+				<p class="auth-hero__attrib-label">🧩 Developed from</p>
+				<div class="auth-hero__attrib-links">
+					<a href="https://github.com/nicepkg/9drive" target="_blank" rel="noreferrer">9Drive</a>
+					<span class="auth-hero__attrib-sep">&</span>
+					<a href="https://github.com/omnicloud" target="_blank" rel="noreferrer">OmniCloud</a>
+				</div>
+			</div>
+
 			<p class="auth-hero__foot">
 				© {{ new Date().getFullYear() }} CloudHub. {{ t('auth.footerMadeBy') }}
 				<a href="https://github.com/jhopan/CloudHub" target="_blank" rel="noreferrer">JhopanStore</a>.
@@ -282,6 +291,52 @@ function toggleLanguage() {
 	margin: 0;
 	font-size: 0.8rem;
 	color: rgba(238, 242, 255, 0.65);
+}
+
+.auth-hero__attrib {
+	position: relative;
+	margin-top: auto;
+	padding-top: 1.5rem;
+	margin-bottom: 1rem;
+}
+
+.auth-hero__attrib-label {
+	margin: 0 0 0.5rem;
+	font-size: 0.75rem;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.08em;
+	color: rgba(238, 242, 255, 0.55);
+}
+
+.auth-hero__attrib-links {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.auth-hero__attrib-links a {
+	color: rgba(255, 255, 255, 0.9);
+	font-weight: 600;
+	font-size: 0.95rem;
+	text-decoration: none;
+	padding: 0.3rem 0.75rem;
+	border-radius: 0.5rem;
+	background: rgba(255, 255, 255, 0.12);
+	backdrop-filter: blur(4px);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.auth-hero__attrib-links a:hover {
+	background: rgba(255, 255, 255, 0.22);
+	transform: translateY(-1px);
+}
+
+.auth-hero__attrib-sep {
+	color: rgba(238, 242, 255, 0.45);
+	font-size: 0.85rem;
+	font-weight: 500;
 }
 
 .auth-hero__foot a {
