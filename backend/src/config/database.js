@@ -76,6 +76,19 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS shared_links (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    file_metadata_id TEXT NOT NULL,
+    token TEXT NOT NULL UNIQUE,
+    password_hash TEXT,
+    expires_at TEXT,
+    download_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY(file_metadata_id) REFERENCES file_metadata(id) ON DELETE CASCADE
+  );
 `);
 
 db.prepare(`
@@ -97,6 +110,27 @@ db.exec(`
     ON file_metadata(user_id, cloud_account_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_key
     ON user_settings(user_id, key);
+  CREATE INDEX IF NOT EXISTS idx_shared_links_token ON shared_links(token);
+`);
+
+// ---------------------------------------------------------------------------
+// Transfer logs – tracks all file operations
+// ---------------------------------------------------------------------------
+db.exec(`
+  CREATE TABLE IF NOT EXISTS transfer_logs (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    cloud_account_id TEXT,
+    action TEXT NOT NULL,
+    file_name TEXT,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'success',
+    error_message TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_transfer_logs_user ON transfer_logs(user_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_transfer_logs_action ON transfer_logs(user_id, action);
 `);
 
 // ---------------------------------------------------------------------------

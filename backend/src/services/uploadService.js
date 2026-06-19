@@ -7,6 +7,7 @@ import { emitUploadEvent } from './websocketHub.js';
 import { getUploadSessionForUser, updateUploadSession, removeUploadSession } from './uploadSessionService.js';
 import { syncAccount } from './syncService.js';
 import { isAuthError } from '../utils/providerErrors.js';
+import { logTransfer } from './transferLogService.js';
 
 async function pipeUpload({ req, session }) {
 	return new Promise((resolve, reject) => {
@@ -103,6 +104,16 @@ async function pipeUpload({ req, session }) {
 					status: 'completed',
 					file: metadata,
 				});
+
+				logTransfer({
+					userId: session.user_id,
+					accountId: account.id,
+					action: 'upload',
+					fileName: info.filename,
+					fileSize: session.size,
+					status: 'success',
+				});
+
 				complete(resolve, metadata);
 			} catch (error) {
 				updateUploadSession(session.id, { status: 'failed' });
@@ -112,6 +123,17 @@ async function pipeUpload({ req, session }) {
 					status: 'failed',
 					message: error.message,
 				});
+
+				logTransfer({
+					userId: session.user_id,
+					accountId: session.cloud_account_id,
+					action: 'upload',
+					fileName: info.filename,
+					fileSize: session.size,
+					status: 'failed',
+					errorMessage: error.message,
+				});
+
 				complete(reject, error);
 			}
 		});

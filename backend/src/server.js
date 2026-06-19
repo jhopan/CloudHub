@@ -1,3 +1,4 @@
+import cron from 'node-cron';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import { createApp } from './app.js';
@@ -5,6 +6,7 @@ import { env } from './config/env.js';
 import { LOCAL_USER_ID } from './config/database.js';
 import { registerUploadSocket, unregisterUploadSocket } from './services/websocketHub.js';
 import { runDeltaSync, scheduleSync } from './services/syncService.js';
+import { runHealthChecks } from './services/healthCheckService.js';
 
 function isNonFatalBackgroundError(error) {
 	const message = error?.message || String(error || '');
@@ -63,6 +65,13 @@ if (env.appMode === 'local') {
 		console.error('Initial sync failed:', error);
 	});
 }
+
+// Run background health checks every 30 minutes
+cron.schedule('*/30 * * * *', () => {
+	runHealthChecks().catch((error) => {
+		console.error('Periodic health check failed:', error);
+	});
+});
 
 server.listen(env.port, () => {
 	console.log(`CloudHub API listening on http://localhost:${env.port}`);

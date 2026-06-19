@@ -7,6 +7,8 @@ import fileRoutes from './routes/fileRoutes.js';
 import uploadRoutes from './routes/uploadRoutes.js';
 import settingsRoutes from './routes/settingsRoutes.js';
 import allocationRoutes from './routes/allocationRoutes.js';
+import transferLogRoutes from './routes/transferLogRoutes.js';
+import sharedLinkRoutes from './routes/sharedLinkRoutes.js';
 import { env } from './config/env.js';
 import { attachAuthContext } from './middleware/authMiddleware.js';
 
@@ -44,6 +46,8 @@ export function createApp() {
 	app.use('/api', uploadRoutes);
 	app.use('/api', settingsRoutes);
 	app.use('/api', allocationRoutes);
+	app.use('/api', transferLogRoutes);
+	app.use('/api', sharedLinkRoutes);
 
 	app.use((error, _req, res, _next) => {
 		console.error(error);

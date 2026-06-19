@@ -5,6 +5,7 @@ import { createAdapter } from '../services/adapterRegistry.js';
 import { selectBestAccount } from '../services/spaceAllocator.js';
 import { syncAccount } from '../services/syncService.js';
 import { requireAppUser } from '../middleware/authMiddleware.js';
+import { logTransfer } from '../services/transferLogService.js';
 
 const router = Router();
 
@@ -243,6 +244,15 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 		for (const context of contexts) {
 			await deleteContextFile(req.user.id, context, context.id, { sync: false });
 			touchedAccountIds.add(context.account.id);
+
+			logTransfer({
+				userId: req.user.id,
+				accountId: context.account.id,
+				action: 'delete',
+				fileName: context.file.file_name,
+				fileSize: context.file.size,
+				status: 'success',
+			});
 		}
 
 		for (const accountId of touchedAccountIds) {
@@ -253,9 +263,9 @@ router.post('/files/bulk/delete', async (req, res, next) => {
 		}
 
 		return res.json({ data: { success: true, count: contexts.length } });
-	} catch (error) {
-		next(error);
-	}
+		} catch (error) {
+			next(error);
+		}
 });
 
 router.get('/files/:id', async (req, res, next) => {
@@ -290,8 +300,30 @@ router.get('/files/:id/download', async (req, res, next) => {
 		if (!context.file.is_folder && context.file.size) {
 			res.setHeader('Content-Length', String(context.file.size));
 		}
+
+		logTransfer({
+			userId: req.user.id,
+			accountId: context.account.id,
+			action: 'download',
+			fileName: context.file.file_name,
+			fileSize: context.file.size,
+			status: 'success',
+		});
+
 		stream.pipe(res);
 	} catch (error) {
+		try {
+			const ctx = await getFileContext(req.user.id, req.params.id);
+			logTransfer({
+				userId: req.user.id,
+				accountId: ctx?.account?.id || null,
+				action: 'download',
+				fileName: ctx?.file?.file_name || req.params.id,
+				fileSize: ctx?.file?.size || 0,
+				status: 'failed',
+				errorMessage: error.message,
+			});
+		} catch { /* logging is best-effort */ }
 		next(error);
 	}
 });
@@ -345,8 +377,29 @@ router.patch('/files/:id/rename', async (req, res, next) => {
 		await context.adapter.renameFile(context.file, name.trim());
 		await syncAccount(req.user.id, context.account);
 
+		logTransfer({
+			userId: req.user.id,
+			accountId: context.account.id,
+			action: 'rename',
+			fileName: `${context.file.file_name} → ${name.trim()}`,
+			fileSize: context.file.size,
+			status: 'success',
+		});
+
 		return res.json({ data: { success: true } });
 	} catch (error) {
+		try {
+			const ctx = await getFileContext(req.user.id, req.params.id);
+			logTransfer({
+				userId: req.user.id,
+				accountId: ctx?.account?.id || null,
+				action: 'rename',
+				fileName: ctx?.file?.file_name || req.params.id,
+				fileSize: ctx?.file?.size || 0,
+				status: 'failed',
+				errorMessage: error.message,
+			});
+		} catch { /* logging is best-effort */ }
 		next(error);
 	}
 });
@@ -360,8 +413,29 @@ router.delete('/files/:id', async (req, res, next) => {
 
 		await deleteContextFile(req.user.id, context, req.params.id);
 
+		logTransfer({
+			userId: req.user.id,
+			accountId: context.account.id,
+			action: 'delete',
+			fileName: context.file.file_name,
+			fileSize: context.file.size,
+			status: 'success',
+		});
+
 		return res.json({ data: { success: true } });
 	} catch (error) {
+		try {
+			const ctx = await getFileContext(req.user.id, req.params.id);
+			logTransfer({
+				userId: req.user.id,
+				accountId: ctx?.account?.id || null,
+				action: 'delete',
+				fileName: ctx?.file?.file_name || req.params.id,
+				fileSize: ctx?.file?.size || 0,
+				status: 'failed',
+				errorMessage: error.message,
+			});
+		} catch { /* logging is best-effort */ }
 		next(error);
 	}
 });
@@ -385,8 +459,26 @@ router.post('/files/folders', async (req, res, next) => {
 
 		await syncAccount(req.user.id, account);
 
+		logTransfer({
+			userId: req.user.id,
+			accountId: account.id,
+			action: 'mkdir',
+			fileName: name.trim(),
+			fileSize: 0,
+			status: 'success',
+		});
+
 		return res.status(201).json({ data: { success: true } });
 	} catch (error) {
+		logTransfer({
+			userId: req.user.id,
+			accountId: null,
+			action: 'mkdir',
+			fileName: req.body?.name || null,
+			fileSize: 0,
+			status: 'failed',
+			errorMessage: error.message,
+		});
 		next(error);
 	}
 });
