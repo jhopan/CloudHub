@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -29,10 +30,15 @@ type RcloneOAuthService struct {
 	accountRepo        *repository.StorageAccountRepository
 	providerRepo       *repository.ProviderRepository
 	oauthRedirectHost  string
+	appBaseURL         string
 
 	// Track active auth sessions
 	mu       sync.Mutex
 	sessions map[string]*authSession
+
+	// Callback proxy server
+	callbackServer     *http.Server
+	callbackServerMu   sync.Mutex
 }
 
 type authSession struct {
@@ -53,6 +59,7 @@ func NewRcloneOAuthService(
 	accountRepo *repository.StorageAccountRepository,
 	providerRepo *repository.ProviderRepository,
 	oauthRedirectHost string,
+	appBaseURL string,
 ) *RcloneOAuthService {
 	return &RcloneOAuthService{
 		rcloneClient:      rcloneClient,
@@ -60,6 +67,7 @@ func NewRcloneOAuthService(
 		accountRepo:       accountRepo,
 		providerRepo:      providerRepo,
 		oauthRedirectHost: oauthRedirectHost,
+		appBaseURL:        appBaseURL,
 		sessions:          make(map[string]*authSession),
 	}
 }
@@ -104,8 +112,9 @@ func (s *RcloneOAuthService) killExistingAuthProcesses() {
 
 // AuthStartResult contains the auth URL and session ID
 type AuthStartResult struct {
-	AuthURL   string `json:"auth_url"`
-	SessionID string `json:"session_id"`
+	AuthURL          string `json:"auth_url"`
+	SessionID        string `json:"session_id"`
+	CallbackProxyURL string `json:"callback_proxy_url,omitempty"`
 }
 
 // StartAuth starts rclone authorize and returns the auth URL
@@ -168,10 +177,8 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 				parts := strings.Fields(line)
 				for _, part := range parts {
 					if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
-					// Clean up trailing characters
+					// Clean up trailing characters - keep original 127.0.0.1 URL
 					url := strings.TrimRight(part, "\"' ,;")
-					// Replace 127.0.0.1 with configured redirect host for VPS/headless
-					url = strings.Replace(url, "127.0.0.1", s.oauthRedirectHost, 1)
 					select {
 						case urlChan <- url:
 						default:
@@ -209,8 +216,8 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 				parts := strings.Fields(line)
 				for _, part := range parts {
 					if strings.HasPrefix(part, "http://") || strings.HasPrefix(part, "https://") {
-						// Replace 127.0.0.1 with configured redirect host for VPS/headless
-						url := strings.Replace(part, "127.0.0.1", s.oauthRedirectHost, 1)
+						// Keep original URL with 127.0.0.1 - don't modify
+						url := strings.TrimRight(part, "\"' ,;")
 						select {
 						case urlChan <- url:
 						default:
@@ -261,14 +268,18 @@ func (s *RcloneOAuthService) StartAuth(ctx context.Context, userID uuid.UUID, pr
 	case url := <-urlChan:
 		authURL = url
 	case <-time.After(15 * time.Second):
-		authURL = fmt.Sprintf("http://%s:53682/auth", s.oauthRedirectHost)
+		authURL = "http://127.0.0.1:53682/auth"
 	}
 
 	session.authURL = authURL
 
+	// Start callback proxy server for VPS/headless deployments
+	callbackProxyURL := s.startCallbackProxyServer(sessionID)
+
 	return &AuthStartResult{
-		AuthURL:   authURL,
-		SessionID: sessionID,
+		AuthURL:          authURL,
+		SessionID:        sessionID,
+		CallbackProxyURL: callbackProxyURL,
 	}, nil
 }
 
@@ -511,4 +522,565 @@ func (s *RcloneOAuthService) exchangeCodeForToken(ctx context.Context, code, bac
 
 	tokenJSON, _ := json.Marshal(rcloneToken)
 	return string(tokenJSON), nil
+}
+
+// startCallbackProxyServer starts a callback proxy server on port 53682
+// that provides a nice HTML page for users to paste their callback URL
+func (s *RcloneOAuthService) startCallbackProxyServer(sessionID string) string {
+	s.callbackServerMu.Lock()
+	defer s.callbackServerMu.Unlock()
+
+	// Stop any existing callback server
+	if s.callbackServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		s.callbackServer.Shutdown(ctx)
+		cancel()
+		s.callbackServer = nil
+	}
+
+	// Check if port 53682 is available
+	listener, err := net.Listen("tcp", ":53682")
+	if err != nil {
+		log.Printf("[callback-proxy] port 53682 not available: %v", err)
+		// Return empty string - frontend will fall back to manual paste
+		return ""
+	}
+
+	mux := http.NewServeMux()
+
+	// Serve the callback paste page
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(s.getCallbackHTML(sessionID)))
+	})
+
+	// Handle callback URL submission
+	mux.HandleFunc("/submit-callback", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST required", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Parse form data
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Failed to parse form", http.StatusBadRequest)
+			return
+		}
+
+		callbackURL := r.FormValue("callback_url")
+		if callbackURL == "" {
+			http.Error(w, "callback_url is required", http.StatusBadRequest)
+			return
+		}
+
+		// Process the callback
+		result, err := s.SubmitCallbackURL(r.Context(), sessionID, callbackURL)
+		if err != nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(s.getErrorHTML(err.Error())))
+			return
+		}
+
+		if result.Success {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(s.getSuccessHTML(result.Label)))
+		} else {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(s.getErrorHTML(result.Error)))
+		}
+	})
+
+	// Handle the /auth endpoint (in case Google redirect somehow reaches here)
+	mux.HandleFunc("/auth", func(w http.ResponseWriter, r *http.Request) {
+		code := r.URL.Query().Get("code")
+		state := r.URL.Query().Get("state")
+
+		if code != "" {
+			// Build the full callback URL and process it
+			callbackURL := fmt.Sprintf("http://127.0.0.1:53682/auth?state=%s&code=%s", state, code)
+			result, err := s.SubmitCallbackURL(r.Context(), sessionID, callbackURL)
+
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if err != nil {
+				w.Write([]byte(s.getErrorHTML(err.Error())))
+			} else if result.Success {
+				w.Write([]byte(s.getSuccessHTML(result.Label)))
+			} else {
+				w.Write([]byte(s.getErrorHTML(result.Error)))
+			}
+			return
+		}
+
+		// No code - redirect to paste page
+		http.Redirect(w, r, "/", http.StatusFound)
+	})
+
+	server := &http.Server{
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+	}
+
+	s.callbackServer = server
+
+	// Start server in background
+	go func() {
+		log.Printf("[callback-proxy] started on port 53682 for session %s", sessionID)
+		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+			log.Printf("[callback-proxy] server error: %v", err)
+		}
+	}()
+
+	// Auto-shutdown after 10 minutes
+	go func() {
+		time.Sleep(10 * time.Minute)
+		s.callbackServerMu.Lock()
+		if s.callbackServer == server {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			server.Shutdown(ctx)
+			cancel()
+			s.callbackServer = nil
+			log.Printf("[callback-proxy] auto-shutdown after timeout")
+		}
+		s.callbackServerMu.Unlock()
+	}()
+
+	// Build the callback proxy URL using the VPS host
+	callbackProxyURL := fmt.Sprintf("http://%s:53682", s.oauthRedirectHost)
+	log.Printf("[callback-proxy] URL: %s", callbackProxyURL)
+
+	return callbackProxyURL
+}
+
+// StopCallbackServer stops the callback proxy server
+func (s *RcloneOAuthService) StopCallbackServer() {
+	s.callbackServerMu.Lock()
+	defer s.callbackServerMu.Unlock()
+
+	if s.callbackServer != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		s.callbackServer.Shutdown(ctx)
+		cancel()
+		s.callbackServer = nil
+		log.Printf("[callback-proxy] stopped")
+	}
+}
+
+// getCallbackHTML returns the HTML page for pasting callback URL
+func (s *RcloneOAuthService) getCallbackHTML(sessionID string) string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudHub - Complete Authorization</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .logo h1 {
+            color: #333;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .logo p {
+            color: #666;
+            font-size: 14px;
+            margin-top: 8px;
+        }
+        .steps {
+            background: #f8fafc;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        .steps h2 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 16px;
+        }
+        .step {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            align-items: flex-start;
+        }
+        .step:last-child { margin-bottom: 0; }
+        .step-num {
+            background: #667eea;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+        .step-text {
+            color: #444;
+            font-size: 14px;
+            line-height: 1.5;
+            padding-top: 4px;
+        }
+        .step-text code {
+            background: #e2e8f0;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .form-group input {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e2e8f0;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .form-group input::placeholder {
+            color: #a0aec0;
+        }
+        .btn {
+            width: 100%;
+            padding: 16px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .hint {
+            background: #fffbeb;
+            border: 1px solid #fcd34d;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 20px;
+            font-size: 13px;
+            color: #92400e;
+        }
+        .hint strong { color: #78350f; }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .loading.active { display: block; }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e2e8f0;
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 16px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">
+            <h1>☁️ CloudHub Storage Gateway</h1>
+            <p>Complete Your Authorization</p>
+        </div>
+
+        <div class="steps">
+            <h2>📋 Follow these steps:</h2>
+            <div class="step">
+                <div class="step-num">1</div>
+                <div class="step-text">
+                    You clicked the authorization link and signed in with Google ✓
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <div class="step-text">
+                    Your browser showed <strong>"This site can't be reached"</strong> — this is expected!
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <div class="step-text">
+                    Copy the <strong>entire URL</strong> from your browser's address bar. It looks like:<br>
+                    <code>http://127.0.0.1:53682/auth?state=...&code=...</code>
+                </div>
+            </div>
+            <div class="step">
+                <div class="step-num">4</div>
+                <div class="step-text">
+                    Paste that URL below and click Submit
+                </div>
+            </div>
+        </div>
+
+        <div class="hint">
+            <strong>💡 Tip:</strong> Click the address bar, press Ctrl+A (or Cmd+A on Mac) to select all, then Ctrl+C to copy.
+        </div>
+
+        <form id="callbackForm" action="/submit-callback" method="POST">
+            <div class="form-group">
+                <label for="callback_url">Paste the callback URL here:</label>
+                <input 
+                    type="text" 
+                    id="callback_url" 
+                    name="callback_url" 
+                    placeholder="http://127.0.0.1:53682/auth?state=...&code=..."
+                    required
+                    autocomplete="off"
+                >
+            </div>
+            <button type="submit" class="btn" id="submitBtn">
+                Complete Authorization
+            </button>
+        </form>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Processing authorization...</p>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('callbackForm').addEventListener('submit', function(e) {
+            const btn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            btn.disabled = true;
+            btn.style.display = 'none';
+            loading.classList.add('active');
+        });
+    </script>
+</body>
+</html>`
+}
+
+// getSuccessHTML returns the success HTML page
+func (s *RcloneOAuthService) getSuccessHTML(label string) string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudHub - Authorization Complete</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 50px 40px;
+            text-align: center;
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: #d1fae5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .icon svg {
+            width: 40px;
+            height: 40px;
+            color: #10b981;
+        }
+        h1 {
+            color: #065f46;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .label {
+            background: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-radius: 8px;
+            padding: 12px 20px;
+            margin: 20px 0;
+            font-weight: 500;
+            color: #166534;
+        }
+        .note {
+            margin-top: 24px;
+            font-size: 14px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+        <h1>Authorization Complete!</h1>
+        <p>Your account has been connected successfully.</p>
+        <div class="label">` + label + `</div>
+        <p class="note">You can close this window and return to CloudHub.</p>
+    </div>
+</body>
+</html>`
+}
+
+// getErrorHTML returns the error HTML page
+func (s *RcloneOAuthService) getErrorHTML(errMsg string) string {
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudHub - Authorization Failed</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 500px;
+            width: 100%;
+            padding: 50px 40px;
+            text-align: center;
+        }
+        .icon {
+            width: 80px;
+            height: 80px;
+            background: #fee2e2;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+        }
+        .icon svg {
+            width: 40px;
+            height: 40px;
+            color: #ef4444;
+        }
+        h1 {
+            color: #991b1b;
+            font-size: 24px;
+            margin-bottom: 12px;
+        }
+        p {
+            color: #666;
+            font-size: 16px;
+            line-height: 1.5;
+        }
+        .error {
+            background: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+            padding: 12px 20px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: #991b1b;
+            word-break: break-word;
+        }
+        .btn {
+            display: inline-block;
+            margin-top: 20px;
+            padding: 12px 24px;
+            background: #667eea;
+            color: white;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 500;
+        }
+        .btn:hover {
+            background: #5a67d8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+        </div>
+        <h1>Authorization Failed</h1>
+        <p>Something went wrong while completing the authorization.</p>
+        <div class="error">` + errMsg + `</div>
+        <p>Please return to CloudHub and try again.</p>
+        <a href="javascript:window.close()" class="btn">Close Window</a>
+    </div>
+</body>
+</html>`
 }

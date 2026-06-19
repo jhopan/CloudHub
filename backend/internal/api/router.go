@@ -67,7 +67,7 @@ func NewRouter(db *pgxpool.Pool, redis *redis.Client, cfg *config.Config) *chi.M
 	fileService := service.NewFileService(fileRepo, accountRepo, sched, rcloneClient, encryptor, transferService)
 
 	// rclone OAuth service (always available - uses rclone authorize)
-	rcloneOAuthService := service.NewRcloneOAuthService(rcloneClient, cfg.RclonePath, accountRepo, providerRepo, cfg.OAuthRedirectHost)
+	rcloneOAuthService := service.NewRcloneOAuthService(rcloneClient, cfg.RclonePath, accountRepo, providerRepo, cfg.OAuthRedirectHost, cfg.AppBaseURL)
 
 	// Initialize handlers
 	authHandler := handlers.NewAuthHandler(authService)

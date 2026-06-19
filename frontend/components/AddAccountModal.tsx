@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { X, Loader2, Copy, Check, AlertCircle } from 'lucide-react';
+import { X, Loader2, Copy, Check, AlertCircle, ExternalLink, ArrowRight } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
 import { useEscapeKey } from '@/lib/use-escape-key';
 import { useToast } from '@/lib/toast-context';
@@ -36,8 +36,10 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
   // OAuth state
   const [oauthSession, setOauthSession] = useState<string | null>(null);
   const [authUrl, setAuthUrl] = useState<string | null>(null);
+  const [callbackProxyUrl, setCallbackProxyUrl] = useState<string | null>(null);
   const [callbackUrl, setCallbackUrl] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedAuth, setCopiedAuth] = useState(false);
 
   // Parse config schema to get required fields
   const getRequiredFields = (): Array<{ name: string; label: string; type: string; placeholder?: string }> => {
@@ -111,6 +113,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
       
       setOauthSession(res.data.session_id);
       setAuthUrl(res.data.auth_url);
+      setCallbackProxyUrl(res.data.callback_proxy_url || null);
       setStep('oauth-wait');
       
       // Start polling
@@ -234,6 +237,14 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const copyAuthUrl = () => {
+    if (authUrl) {
+      navigator.clipboard.writeText(authUrl);
+      setCopiedAuth(true);
+      setTimeout(() => setCopiedAuth(false), 2000);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 animate-backdrop p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto animate-scale-in">
@@ -316,14 +327,18 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
           {/* OAuth Wait Step */}
           {step === 'oauth-wait' && authUrl && (
             <div className="space-y-4">
+              {/* Step 1: Open auth URL */}
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                <p className="text-sm text-blue-900 font-medium mb-2">
-                  Authorization Required
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex items-center justify-center w-6 h-6 bg-blue-600 text-white text-xs font-bold rounded-full">1</span>
+                  <p className="text-sm text-blue-900 font-medium">
+                    Open the authorization link
+                  </p>
+                </div>
+                <p className="text-xs text-blue-700 mb-3 ml-8">
+                  Copy this URL and open it in a new browser tab:
                 </p>
-                <p className="text-xs text-blue-700 mb-3">
-                  Open this URL in your browser to authorize access:
-                </p>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-8">
                   <input
                     type="text"
                     value={authUrl}
@@ -331,42 +346,124 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
                     className="flex-1 px-3 py-2 bg-white border border-blue-300 rounded-lg text-xs font-mono"
                   />
                   <button
-                    onClick={() => copyToClipboard(authUrl)}
+                    onClick={copyAuthUrl}
                     className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
                     title="Copy URL"
                   >
-                    {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+                    {copiedAuth ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
                   </button>
                 </div>
               </div>
 
-              <div className="text-center py-4">
-                <Loader2 className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-3" />
-                <p className="text-sm text-gray-600">Waiting for authorization...</p>
-              </div>
-
-              {/* Manual callback option */}
-              <div className="border-t border-gray-200 pt-4">
-                <p className="text-xs text-gray-600 mb-2">
-                  After clicking the link and signing in with Google, your browser will show an error page. Copy the <strong>FULL URL</strong> from the address bar and paste it here:
+              {/* Step 2: Sign in with Google */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex items-center justify-center w-6 h-6 bg-gray-600 text-white text-xs font-bold rounded-full">2</span>
+                  <p className="text-sm text-gray-900 font-medium">
+                    Sign in with Google
+                  </p>
+                </div>
+                <p className="text-xs text-gray-600 ml-8">
+                  Grant permission to access your {provider.display_name} account
                 </p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={callbackUrl}
-                    onChange={(e) => setCallbackUrl(e.target.value)}
-                    placeholder="http://YOUR_VPS_IP:53682/auth?state=...&code=..."
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                  />
-                  <button
-                    onClick={handleManualCallback}
-                    disabled={!callbackUrl || loading}
-                    className="px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                  >
-                    Submit
-                  </button>
-                </div>
               </div>
+
+              {/* Step 3: Handle the "can't be reached" page */}
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="flex items-center justify-center w-6 h-6 bg-amber-600 text-white text-xs font-bold rounded-full">3</span>
+                  <p className="text-sm text-amber-900 font-medium">
+                    Copy the error page URL
+                  </p>
+                </div>
+                <p className="text-xs text-amber-700 ml-8 mb-2">
+                  After signing in, your browser will show <strong>"This site can't be reached"</strong>. This is normal!
+                </p>
+                <p className="text-xs text-amber-700 ml-8">
+                  Copy the <strong>entire URL</strong> from the address bar (Ctrl+A, Ctrl+C)
+                </p>
+              </div>
+
+              {/* Step 4: Submit the callback */}
+              {callbackProxyUrl ? (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="flex items-center justify-center w-6 h-6 bg-green-600 text-white text-xs font-bold rounded-full">4</span>
+                    <p className="text-sm text-green-900 font-medium">
+                      Complete authorization
+                    </p>
+                  </div>
+                  <p className="text-xs text-green-700 ml-8 mb-3">
+                    Open this page and paste the URL you copied:
+                  </p>
+                  <a
+                    href={callbackProxyUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 ml-8 px-4 py-3 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open Callback Page
+                    <ArrowRight className="w-4 h-4" />
+                  </a>
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="flex items-center justify-center w-6 h-6 bg-green-600 text-white text-xs font-bold rounded-full">4</span>
+                    <p className="text-sm text-green-900 font-medium">
+                      Paste the callback URL below
+                    </p>
+                  </div>
+                  <div className="flex gap-2 ml-8">
+                    <input
+                      type="text"
+                      value={callbackUrl}
+                      onChange={(e) => setCallbackUrl(e.target.value)}
+                      placeholder="http://127.0.0.1:53682/auth?state=...&code=..."
+                      className="flex-1 px-3 py-2 border border-green-300 rounded-lg text-sm"
+                    />
+                    <button
+                      onClick={handleManualCallback}
+                      disabled={!callbackUrl || loading}
+                      className="px-4 py-2 bg-green-600 text-white text-sm font-medium rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Submit
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Polling status */}
+              <div className="text-center py-3 border-t border-gray-200">
+                <Loader2 className="w-5 h-5 animate-spin text-blue-600 mx-auto mb-2" />
+                <p className="text-xs text-gray-500">Waiting for authorization...</p>
+              </div>
+
+              {/* Manual paste fallback (always available when callback_proxy_url exists) */}
+              {callbackProxyUrl && (
+                <details className="border-t border-gray-200 pt-3">
+                  <summary className="text-xs text-gray-500 cursor-pointer hover:text-gray-700">
+                    Or paste the callback URL here manually
+                  </summary>
+                  <div className="flex gap-2 mt-3">
+                    <input
+                      type="text"
+                      value={callbackUrl}
+                      onChange={(e) => setCallbackUrl(e.target.value)}
+                      placeholder="http://127.0.0.1:53682/auth?state=...&code=..."
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                    />
+                    <button
+                      onClick={handleManualCallback}
+                      disabled={!callbackUrl || loading}
+                      className="px-4 py-2 bg-gray-600 text-white text-sm font-medium rounded-lg hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
+                    >
+                      Submit
+                    </button>
+                  </div>
+                </details>
+              )}
             </div>
           )}
 
@@ -399,6 +496,7 @@ export function AddAccountModal({ provider, onClose, onSuccess }: AddAccountModa
                   setError(null);
                   setOauthSession(null);
                   setAuthUrl(null);
+                  setCallbackProxyUrl(null);
                 }}
                 className="w-full py-2.5 bg-gray-600 text-white font-medium rounded-lg hover:bg-gray-700 transition-colors"
               >
