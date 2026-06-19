@@ -98,3 +98,15 @@ db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_user_settings_user_key
     ON user_settings(user_id, key);
 `);
+
+// ---------------------------------------------------------------------------
+// Schema migrations – safe additive ALTERs
+// ---------------------------------------------------------------------------
+
+// Add rclone_remote column to cloud_accounts for the generic rclone adapter.
+// We use a try/catch because SQLite has no IF NOT EXISTS for ALTER TABLE.
+try {
+	db.exec('ALTER TABLE cloud_accounts ADD COLUMN rclone_remote TEXT DEFAULT NULL');
+} catch (_e) {
+	// Column already exists – safe to ignore.
+}
