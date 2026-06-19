@@ -590,7 +590,22 @@ func (s *RcloneOAuthService) handleCallbackAuth(w http.ResponseWriter, r *http.R
 	session.done = true
 	s.mu.Unlock()
 
-	log.Printf("[callback-proxy] auth code received and token obtained for session %s", sessionID)
+	// Finalize – create rclone remote and storage account in DB
+	remoteName, finalizeErr := s.finalizeAuth(context.Background(), session)
+	if finalizeErr != nil {
+		log.Printf("[callback-proxy] finalize failed for session %s: %v", sessionID, finalizeErr)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, s.getErrorHTML("Authorization succeeded but failed to save account: "+finalizeErr.Error()))
+		return
+	}
+
+	// Cleanup session
+	s.mu.Lock()
+	delete(s.sessionsByState, state)
+	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+
+	log.Printf("[callback-proxy] auth code received, token obtained, account created for session %s (remote: %s)", sessionID, remoteName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, s.getSuccessHTML())
@@ -670,7 +685,22 @@ func (s *RcloneOAuthService) handlePostCallback(w http.ResponseWriter, r *http.R
 	session.done = true
 	s.mu.Unlock()
 
-	log.Printf("[callback-proxy] pasted URL processed, token obtained for session %s", sessionID)
+	// Finalize – create rclone remote and storage account in DB
+	remoteName, finalizeErr := s.finalizeAuth(context.Background(), session)
+	if finalizeErr != nil {
+		log.Printf("[callback-proxy] finalize failed (paste) for session %s: %v", sessionID, finalizeErr)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		fmt.Fprint(w, s.getErrorHTML("Token obtained but failed to save account: "+finalizeErr.Error()))
+		return
+	}
+
+	// Cleanup session
+	s.mu.Lock()
+	delete(s.sessionsByState, state)
+	delete(s.sessions, sessionID)
+	s.mu.Unlock()
+
+	log.Printf("[callback-proxy] pasted URL processed, token obtained, account created for session %s (remote: %s)", sessionID, remoteName)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, s.getSuccessHTML())
