@@ -6,6 +6,7 @@ import { S3Adapter } from '../adapters/S3Adapter.js';
 import { PCloudAdapter } from '../adapters/PCloudAdapter.js';
 import { YandexAdapter } from '../adapters/YandexAdapter.js';
 import { RcloneAdapter } from '../adapters/RcloneAdapter.js';
+import { TeraBoxAdapter } from '../adapters/TeraBoxAdapter.js';
 
 const adapters = {
 	google_drive: GoogleDriveAdapter,
@@ -24,6 +25,7 @@ const adapters = {
 	seafile: RcloneAdapter,
 	nextcloud: RcloneAdapter, // rclone type: webdav
 	box: RcloneAdapter,
+	terabox: TeraBoxAdapter,
 };
 
 export function createAdapter(account) {

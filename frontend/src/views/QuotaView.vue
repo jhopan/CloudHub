@@ -27,6 +27,7 @@ import yandexLogo from '../assets/yandex-disk.svg';
 import s3Logo from '../assets/s3-storage.svg';
 import DriveShell from '../components/DriveShell.vue';
 import MegaConnectModal from '../components/MegaConnectModal.vue';
+import TeraBoxConnectModal from '../components/TeraBoxConnectModal.vue';
 import PCloudConnectModal from '../components/PCloudConnectModal.vue';
 import S3ConnectModal from '../components/S3ConnectModal.vue';
 import TruncateMarquee from '../components/TruncateMarquee.vue';
@@ -47,6 +48,7 @@ const isConnectMenuOpen = ref(false);
 const isMegaModalOpen = ref(false);
 const isPCloudModalOpen = ref(false);
 const isS3ModalOpen = ref(false);
+const isTeraBoxModalOpen = ref(false);
 
 const ALLOCATION_STRATEGIES = ['round_robin', 'weighted_round_robin', 'least_used', 'most_free', 'manual'];
 const activeTab = ref('overview');
@@ -160,6 +162,13 @@ const providerConnectOptions = computed(() => [
 		icon: s3Logo,
 		action: openS3Modal,
 	},
+	{
+		key: 'terabox',
+		label: 'TeraBox',
+		busyLabel: t('storage.connectingProvider', { provider: 'TeraBox' }),
+		icon: '☁️',
+		action: openTeraBoxModal,
+	},
 ]);
 
 const storageSegments = computed(() => {
@@ -232,6 +241,7 @@ function providerLabel(provider) {
 	if (provider === 'pcloud') return 'pCloud';
 	if (provider === 'yandex') return 'Yandex Disk';
 	if (provider === 's3') return 'S3 Storage';
+	if (provider === 'terabox') return 'TeraBox';
 	return provider;
 }
 
@@ -521,6 +531,31 @@ async function connectS3(payload) {
 	}
 }
 
+function openTeraBoxModal() {
+	isConnectMenuOpen.value = false;
+	actionError.value = '';
+	isTeraBoxModalOpen.value = true;
+}
+
+function closeTeraBoxModal() {
+	if (connectingProvider.value === 'terabox') return;
+	isTeraBoxModalOpen.value = false;
+}
+
+async function connectTeraBox(payload) {
+	connectingProvider.value = 'terabox';
+	actionError.value = '';
+	try {
+		await api.connectTeraBoxAccount(payload);
+		await accountStore.loadAccounts();
+		isTeraBoxModalOpen.value = false;
+	} catch (error) {
+		actionError.value = error.message;
+	} finally {
+		connectingProvider.value = '';
+	}
+}
+
 async function disconnectAccount(account) {
 	const confirmed = window.confirm(t('storage.disconnectConfirm', { email: account.email }));
 	if (!confirmed) return;
@@ -780,6 +815,7 @@ onMounted(async () => {
 			<MegaConnectModal v-if="isMegaModalOpen" :is-connecting="connectingProvider === 'mega'" :error="actionError" @close="closeMegaModal" @connect="connectMega" />
 			<PCloudConnectModal v-if="isPCloudModalOpen" :is-connecting="connectingProvider === 'pcloud'" :error="actionError" @close="closePCloudModal" @connect="connectPCloud" />
 			<S3ConnectModal v-if="isS3ModalOpen" :is-connecting="connectingProvider === 's3'" :error="actionError" @close="closeS3Modal" @connect="connectS3" />
+		<TeraBoxConnectModal v-if="isTeraBoxModalOpen" :is-connecting="connectingProvider === 'terabox'" :error="actionError" @close="closeTeraBoxModal" @connect="connectTeraBox" />
 		</div>
 	</DriveShell>
 </template>

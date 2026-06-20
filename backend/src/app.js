@@ -11,6 +11,7 @@ import transferLogRoutes from './routes/transferLogRoutes.js';
 import sharedLinkRoutes from './routes/sharedLinkRoutes.js';
 import rcloneProviderRoutes from './routes/rcloneProviderRoutes.js';
 import hubRoutes from './routes/hubRoutes.js';
+import teraboxRoutes from './routes/teraboxRoutes.js';
 import { env } from './config/env.js';
 import { attachAuthContext } from './middleware/authMiddleware.js';
 
@@ -52,6 +53,7 @@ export function createApp() {
 	app.use('/api', sharedLinkRoutes);
 	app.use('/api', rcloneProviderRoutes);
 	app.use('/api', hubRoutes);
+	app.use('/api/accounts/terabox', teraboxRoutes);
 
 	app.use((error, _req, res, _next) => {
 		console.error(error);

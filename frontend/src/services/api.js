@@ -145,6 +145,18 @@ export const api = {
 			body: JSON.stringify(payload),
 		});
 	},
+	connectTeraBoxAccount(payload) {
+		return request('/accounts/terabox/connect', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	},
+	testTeraBoxConnection(payload) {
+		return request('/accounts/terabox/test', {
+			method: 'POST',
+			body: JSON.stringify(payload),
+		});
+	},
 	getYandexConnectUrl() {
 		return request('/accounts/yandex/connect');
 	},
