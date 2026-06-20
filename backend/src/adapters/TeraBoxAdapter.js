@@ -32,10 +32,10 @@ export class TeraBoxAdapter extends BaseCloudAdapter {
 	async getStorageSummary() {
 		const app = await this._init();
 		try {
-			const quota = app.params;
+			const quota = await app.getQuota();
 			return {
-				totalSpace: Number(quota.total || this.account.total_space || 0),
-				usedSpace: Number(quota.used || this.account.used_space || 0),
+				totalSpace: Number(quota?.total || this.account.total_space || 0),
+				usedSpace: Number(quota?.used || this.account.used_space || 0),
 			};
 		} catch {
 			return super.getStorageSummary();
@@ -44,7 +44,7 @@ export class TeraBoxAdapter extends BaseCloudAdapter {
 
 	async fetchStructure(parentPath = '/') {
 		const app = await this._init();
-		const result = await app.listDir(parentPath);
+		const result = await app.getRemoteDir(parentPath);
 		if (!result || !result.list) return [];
 
 		return result.list.map(item => ({
@@ -112,7 +112,7 @@ export class TeraBoxAdapter extends BaseCloudAdapter {
 		const sliceMd5 = createHash('md5', buffer.subarray(0, Math.min(256 * 1024, buffer.length)));
 
 		// Step 1: Precreate
-		const pre = await app.precreate({
+		const pre = await app.precreateFile({
 			path: remotePath,
 			size: buffer.length,
 			isdir: 0,
@@ -166,24 +166,21 @@ export class TeraBoxAdapter extends BaseCloudAdapter {
 
 	async mkdir(remotePath) {
 		const app = await this._init();
-		await app.filemanager('mkdir', [{ path: remotePath }]);
+		await app.createDir(remotePath);
 		return { success: true };
 	}
 
 	async search(keyword) {
-		// terabox-api doesn't expose search directly, use listDir with filtering
 		const app = await this._init();
-		const result = await app.listDir('/');
+		const result = await app.search(keyword);
 		if (!result?.list) return [];
-		return result.list
-			.filter(f => f.server_filename.toLowerCase().includes(keyword.toLowerCase()))
-			.map(item => ({
-				id: String(item.fs_id),
-				name: item.server_filename,
-				size: item.size || 0,
-				isDir: !!item.isdir,
-				path: item.path,
-			}));
+		return result.list.map(item => ({
+			id: String(item.fs_id),
+			name: item.server_filename,
+			size: item.size || 0,
+			isDir: !!item.isdir,
+			path: item.path,
+		}));
 	}
 
 	async createShare(paths, password, periodDays) {
