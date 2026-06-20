@@ -84,7 +84,7 @@ router.post('/test', async (req, res) => {
 // List files in TeraBox
 router.get('/list/:accountId', async (req, res) => {
 	try {
-		const account = getAccountById(req.params.accountId, req.user.id);
+		const account = getAccountById(req.user.id, req.params.accountId);
 		if (!account) return res.status(404).json({ error: 'Account not found' });
 
 		const creds = decryptJson(account.encrypted_credentials);
@@ -102,7 +102,7 @@ router.get('/list/:accountId', async (req, res) => {
 // Download file from TeraBox
 router.get('/download/:accountId', async (req, res) => {
 	try {
-		const account = getAccountById(req.params.accountId, req.user.id);
+		const account = getAccountById(req.user.id, req.params.accountId);
 		if (!account) return res.status(404).json({ error: 'Account not found' });
 
 		const creds = decryptJson(account.encrypted_credentials);
@@ -125,7 +125,7 @@ router.get('/download/:accountId', async (req, res) => {
 // Delete files from TeraBox
 router.post('/delete/:accountId', async (req, res) => {
 	try {
-		const account = getAccountById(req.params.accountId, req.user.id);
+		const account = getAccountById(req.user.id, req.params.accountId);
 		if (!account) return res.status(404).json({ error: 'Account not found' });
 
 		const creds = decryptJson(account.encrypted_credentials);
@@ -143,7 +143,7 @@ router.post('/delete/:accountId', async (req, res) => {
 // Get quota
 router.get('/quota/:accountId', async (req, res) => {
 	try {
-		const account = getAccountById(req.params.accountId, req.user.id);
+		const account = getAccountById(req.user.id, req.params.accountId);
 		if (!account) return res.status(404).json({ error: 'Account not found' });
 
 		const creds = decryptJson(account.encrypted_credentials);
