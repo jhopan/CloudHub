@@ -60,14 +60,20 @@ export class TeraBoxAdapter extends BaseCloudAdapter {
 
 	async downloadStream(remotePath) {
 		const app = await this._init();
-		const meta = await app.getFileMeta([{ path: remotePath }]);
-		if (!meta || !meta.list || !meta.list.length) {
-			throw new Error('TeraBox: file not found');
-		}
-		const file = meta.list[0];
-		const dlink = file.dlink;
-		if (!dlink) throw new Error('TeraBox: no download link');
 
+		// First, find the file to get its fs_id
+		const dir = remotePath.substring(0, remotePath.lastIndexOf('/')) || '/';
+		const listing = await app.getRemoteDir(dir);
+		const fileName = remotePath.split('/').pop();
+		const file = listing?.list?.find(f => f.server_filename === fileName && !f.isdir);
+
+		if (!file) throw new Error('TeraBox: file not found');
+
+		// Get download link using fs_id
+		const dlResult = await app.download([file.fs_id]);
+		if (!dlResult?.dlink?.length) throw new Error('TeraBox: no download link');
+
+		const dlink = dlResult.dlink[0].dlink;
 		const resp = await fetch(dlink, {
 			headers: {
 				'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
